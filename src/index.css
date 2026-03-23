@@ -1,151 +1,238 @@
+/* ─── Tailwind ─────────────────────────────────────────────────────────────── */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   html { font-family: 'Syne', system-ui, sans-serif; }
-  * { box-sizing: border-box; }
+  *, *::before, *::after { box-sizing: border-box; }
 }
 
-/* ═══ THEME TOKENS ═══════════════════════════════════════════════════════════ */
-:root,
-html.theme-dark {
-  --bg:          #09090b;
-  --card-bg:     rgba(24,24,27,0.84);
-  --card-bdr:    rgba(255,255,255,0.07);
-  --topbar-bg:   rgba(9,9,11,0.92);
-  --topbar-bdr:  rgba(255,255,255,0.06);
-  --sidebar-bg:  rgba(9,9,11,0.97);
-  --sidebar-bdr: rgba(255,255,255,0.06);
-  --sep:         rgba(255,255,255,0.06);
-  --subtle-bg:   rgba(255,255,255,0.04);
-  --subtle-cl:   #52525b;
-  --bnav-bg:     rgba(9,9,11,0.95);
-  --bnav-bdr:    rgba(255,255,255,0.07);
-  --sticky-bg:   #18181b;
-  --text:        #f4f4f5;
+/* ═══════════════════════════════════════════════════════════════════════════════
+   CSS VARIABLE THEME SYSTEM
+   The ONLY theme mechanism. JS writes variables onto :root — zero class toggles,
+   zero layout recalculation. The browser applies the transition on GPU.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* accent — overwritten per exam */
+  --ac:       #22d3ee;
+  --glow:     rgba(34, 211, 238, 0.4);
+
+  /* layout shell — static, never change per tick */
+  --bg:       #09090b;
+  --surface:  rgba(24, 24, 27, 0.85);
+  --border:   rgba(255, 255, 255, 0.07);
+  --sep:      rgba(255, 255, 255, 0.06);
+
+  /* text */
+  --text:     #f4f4f5;
+  --muted:    rgba(161, 161, 170, 0.7);
+
+  /* form fields */
+  --input-bg: #27272a;
+  --input-bd: #3f3f46;
+  --sel-bg:   #27272a;
+  --sel-text: #f4f4f5;
+  --opt-bg:   #18181b;
+
+  /* bars */
+  --track:    rgba(255, 255, 255, 0.08);
+  --topbar:   rgba(9, 9, 11, 0.92);
+  --sidebar:  rgba(9, 9, 11, 0.97);
+  --bnav:     rgba(9, 9, 11, 0.95);
+  --modal-bg: #18181b;
+  --sticky:   #18181b;
+  --badge:    rgba(255, 255, 255, 0.06);
+  --subtle:   rgba(255, 255, 255, 0.04);
+  --sub-cl:   #52525b;
+  --row-base: rgba(255, 255, 255, 0.02);
+  --card-done:rgba(34, 211, 238, 0.05);   /* updated per-accent in JS */
+
+  /* safe transitions — GPU only, no layout */
+  --theme-transition: background-color 500ms ease, color 500ms ease,
+                      border-color 500ms ease, opacity 500ms ease;
 }
 
-html.theme-light {
-  --bg:          #f1f5f9;
-  --card-bg:     rgba(255,255,255,0.92);
-  --card-bdr:    rgba(0,0,0,0.08);
-  --topbar-bg:   rgba(241,245,249,0.94);
-  --topbar-bdr:  rgba(0,0,0,0.07);
-  --sidebar-bg:  rgba(255,255,255,0.97);
-  --sidebar-bdr: rgba(0,0,0,0.07);
-  --sep:         rgba(0,0,0,0.06);
-  --subtle-bg:   rgba(0,0,0,0.04);
-  --subtle-cl:   #64748b;
-  --bnav-bg:     rgba(255,255,255,0.96);
-  --bnav-bdr:    rgba(0,0,0,0.08);
-  --sticky-bg:   #ffffff;
-  --text:        #0f172a;
+/* Light palette */
+.t-light {
+  --bg:       #f1f5f9;
+  --surface:  rgba(255, 255, 255, 0.88);
+  --border:   rgba(0, 0, 0, 0.08);
+  --sep:      rgba(0, 0, 0, 0.06);
+  --text:     #0f172a;
+  --muted:    rgba(71, 85, 105, 0.8);
+  --input-bg: #f1f5f9;
+  --input-bd: #cbd5e1;
+  --sel-bg:   #f1f5f9;
+  --sel-text: #0f172a;
+  --opt-bg:   #ffffff;
+  --track:    rgba(0, 0, 0, 0.08);
+  --topbar:   rgba(241, 245, 249, 0.94);
+  --sidebar:  rgba(255, 255, 255, 0.97);
+  --bnav:     rgba(255, 255, 255, 0.97);
+  --modal-bg: #ffffff;
+  --sticky:   #ffffff;
+  --badge:    rgba(0, 0, 0, 0.04);
+  --subtle:   rgba(0, 0, 0, 0.04);
+  --sub-cl:   #64748b;
+  --row-base: rgba(0, 0, 0, 0.02);
 }
 
-html.theme-neon {
-  --bg:          #000000;
-  --card-bg:     rgba(3,3,4,0.93);
-  --card-bdr:    rgba(34,211,238,0.14);
-  --topbar-bg:   rgba(0,0,0,0.93);
-  --topbar-bdr:  rgba(34,211,238,0.14);
-  --sidebar-bg:  rgba(0,0,0,0.97);
-  --sidebar-bdr: rgba(34,211,238,0.14);
-  --sep:         rgba(34,211,238,0.07);
-  --subtle-bg:   rgba(34,211,238,0.04);
-  --subtle-cl:   #155e75;
-  --bnav-bg:     rgba(0,0,0,0.96);
-  --bnav-bdr:    rgba(34,211,238,0.14);
-  --sticky-bg:   #030304;
-  --text:        #ecfeff;
+/* Neon palette */
+.t-neon {
+  --bg:       #000000;
+  --surface:  rgba(3, 3, 4, 0.92);
+  --border:   rgba(34, 211, 238, 0.14);
+  --sep:      rgba(34, 211, 238, 0.07);
+  --text:     #ecfeff;
+  --muted:    rgba(14, 116, 144, 0.9);
+  --input-bg: #09090b;
+  --input-bd: #3f3f46;
+  --sel-bg:   #09090b;
+  --sel-text: #ecfeff;
+  --opt-bg:   #09090b;
+  --track:    rgba(34, 211, 238, 0.06);
+  --topbar:   rgba(0, 0, 0, 0.93);
+  --sidebar:  rgba(0, 0, 0, 0.97);
+  --bnav:     rgba(0, 0, 0, 0.97);
+  --modal-bg: #030304;
+  --sticky:   #030304;
+  --badge:    rgba(34, 211, 238, 0.06);
+  --subtle:   rgba(34, 211, 238, 0.04);
+  --sub-cl:   #155e75;
+  --row-base: rgba(34, 211, 238, 0.02);
 }
 
-/* Smooth 500ms theme colour transitions across the entire document */
+/* ═══ GLOBAL SHELL ══════════════════════════════════════════════════════════════
+   The page background is set once here and changes only via CSS var update.
+   No React class toggling → no layout recalculation.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
 html, body {
   background-color: var(--bg);
   color: var(--text);
-  transition: background-color 0.5s ease, color 0.5s ease;
+  min-height: 100dvh;
+  overscroll-behavior: none;
+  transition: var(--theme-transition);
 }
 
-/* ═══ SEMANTIC LAYOUT CLASSES ════════════════════════════════════════════════ */
-.app-root    { background-color: var(--bg); transition: background-color 0.5s ease; }
-.st-card     { background: var(--card-bg) !important; border-color: var(--card-bdr) !important; transition: background-color 0.5s ease, border-color 0.5s ease; }
-.st-sticky-hd{ background-color: var(--sticky-bg); transition: background-color 0.5s ease; }
-.st-sidebar  { background: var(--sidebar-bg) !important; border-color: var(--sidebar-bdr) !important; transition: background-color 0.5s ease; }
-.st-topbar   { background: var(--topbar-bg)  !important; border-color: var(--topbar-bdr)  !important; transition: background-color 0.5s ease; }
-.st-bottom-nav { background: var(--bnav-bg); border-top: 1px solid var(--bnav-bdr); transition: background-color 0.5s ease; }
+/* Static shell wrapper — never re-painted by React */
+#root, .app-shell {
+  background-color: var(--bg);
+  min-height: 100dvh;
+  transition: background-color 500ms ease;
+}
+
+/* Card & surface tokens */
+.st-card {
+  background:   var(--surface);
+  border-color: var(--border);
+  transition:   var(--theme-transition);
+}
+.st-topbar   { background: var(--topbar);  border-color: var(--sep); transition: var(--theme-transition); }
+.st-sidebar  { background: var(--sidebar); border-color: var(--sep); transition: var(--theme-transition); }
+.st-bnav     { background: var(--bnav);    border-top: 1px solid var(--sep); transition: var(--theme-transition); }
+.st-modal    { background: var(--modal-bg); }
 .st-sep-b    { border-bottom: 1px solid var(--sep); }
 .st-sep-t    { border-top:    1px solid var(--sep); }
-.st-subtle-btn { background-color: var(--subtle-bg) !important; color: var(--subtle-cl) !important; }
+.st-subtle   { background: var(--subtle) !important; color: var(--sub-cl) !important; }
+.st-sticky   { background: var(--sticky); }
 .glass       { backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
 
-/* ── Main content offset ───────────────────────────────────────────────────── */
-.st-main { margin-left: 0; transition: margin-left 0.25s ease; }
+/* Main content offset (desktop sidebar = 62 px collapsed) */
+.st-main { margin-left: 0; }
 @media (min-width: 768px) { .st-main { margin-left: 62px; } }
 
-/* ── Viewport ──────────────────────────────────────────────────────────────── */
-html, body, #root { min-height: 100dvh; overscroll-behavior: none; }
+/* ═══ SCROLLBAR ═════════════════════════════════════════════════════════════════ */
+::-webkit-scrollbar        { width: 4px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
+.t-light ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.13); }
 
-/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
-::-webkit-scrollbar       { width: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
-html.theme-light ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.13); }
+/* ═══ XP SHIMMER ════════════════════════════════════════════════════════════════ */
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+.xp-bar {
+  background: linear-gradient(90deg, var(--ac), #818cf8, var(--ac));
+  background-size: 200% auto;
+  animation: shimmer 2.4s linear infinite;
+}
 
-/* ── XP bar shimmer ────────────────────────────────────────────────────────── */
-@keyframes shimmer { 0%{background-position:-200% center} 100%{background-position:200% center} }
-.xp-bar { background-size: 200% auto; animation: shimmer 2.4s linear infinite; }
+/* ═══ ELECTRIC ZAP BUTTON ══════════════════════════════════════════════════════
+   position:fixed + contain:strict isolates the button entirely.
+   will-change:transform ensures the GPU handles rotation without touching layout.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+.zap-btn {
+  will-change: transform;
+  contain: strict;       /* browser: nothing here affects the rest of the page */
+}
 
-/* ═══ ELECTRIC ZAP RING ══════════════════════════════════════════════════════
-   will-change: transform — promotes to its own GPU layer.
-   The rotation transform runs fully on the compositor thread,
-   never touching the React render cycle. Zero flicker on rotation.           */
 @keyframes zap-pulse {
-  0%,100% { box-shadow: 0 0  8px var(--glow,rgba(34,211,238,.4)), 0 0 16px var(--glow,rgba(34,211,238,.4)); }
-  50%     { box-shadow: 0 0 22px var(--glow,rgba(34,211,238,.4)), 0 0 46px var(--glow,rgba(34,211,238,.4)), 0 0 66px var(--glow,rgba(34,211,238,.4)); }
+  0%, 100% { box-shadow: 0 0  8px var(--glow), 0 0 16px var(--glow); }
+  50%       { box-shadow: 0 0 22px var(--glow), 0 0 44px var(--glow); }
 }
-.zap-ring {
-  will-change: transform;          /* GPU layer — rotation never causes layout */
-  animation: zap-pulse 2s ease-in-out infinite;
-}
-html.theme-neon .zap-ring { animation-duration: 1.4s; }
+.zap-ring { animation: zap-pulse 2s ease-in-out infinite; }
+.t-neon .zap-ring { animation-duration: 1.3s; }
 
-/* ── Level-up toast ────────────────────────────────────────────────────────── */
-@keyframes lvl-up {
-  0%   { transform: translateX(-50%) translateY(60px)  scale(0.78); opacity: 0; }
+/* ═══ LEVEL-UP TOAST ════════════════════════════════════════════════════════════ */
+@keyframes lvl-in {
+  0%   { transform: translateX(-50%) translateY(60px)  scale(.78); opacity: 0; }
   18%  { transform: translateX(-50%) translateY(-8px)  scale(1.06); opacity: 1; }
   80%  { transform: translateX(-50%) translateY(0)     scale(1);    opacity: 1; }
-  100% { transform: translateX(-50%) translateY(-28px) scale(0.92); opacity: 0; }
+  100% { transform: translateX(-50%) translateY(-28px) scale(.92);  opacity: 0; }
 }
-.levelup { animation: lvl-up 2.8s cubic-bezier(0.34,1.56,0.64,1) forwards; }
+.levelup { animation: lvl-in 2.8s cubic-bezier(.34,1.56,.64,1) forwards; }
 
-/* ── Select arrow ──────────────────────────────────────────────────────────── */
+/* ═══ CANVAS TIMER RING (GPU layer, no React re-paint) ══════════════════════════
+   The canvas element has its own compositing layer.
+   Updating pixels inside it never triggers a DOM layout pass.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+.timer-canvas { will-change: contents; display: block; }
+
+/* ═══ TIMER TEXT — tabular-nums + fixed width stops "jiggling" ═════════════════ */
+.timer-text {
+  font-variant-numeric: tabular-nums;
+  min-width: 4ch;
+  display:   inline-block;
+  text-align: center;
+  font-family: 'Rajdhani', 'DM Mono', monospace;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+/* ═══ FORM FIELDS ═══════════════════════════════════════════════════════════════ */
+input, select {
+  background:    var(--input-bg);
+  border:        1px solid var(--input-bd);
+  color:         var(--text);
+  border-radius: 0.75rem;
+  font-family:   'Syne', sans-serif;
+  outline:       none;
+  transition:    border-color .2s;
+}
+input:focus, select:focus { border-color: var(--ac) !important; }
+
 select {
   appearance: none; -webkit-appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath fill='%2371717a' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: right 14px center;
+  background-repeat: no-repeat;
+  background-position: right 14px center;
   padding-right: 36px !important;
 }
-select:focus { border-color: var(--ac,#22d3ee) !important; outline: none; }
 
-/* ── Focus rings ───────────────────────────────────────────────────────────── */
-button:focus-visible, input:focus-visible { outline: 2px solid var(--ac,#22d3ee); outline-offset: 2px; }
+/* ═══ FOCUS RINGS ═══════════════════════════════════════════════════════════════ */
+button:focus-visible, input:focus-visible {
+  outline: 2px solid var(--ac);
+  outline-offset: 2px;
+}
 
-/* ── Mobile safe area ──────────────────────────────────────────────────────── */
+/* ═══ SAFE AREA — iOS home bar ══════════════════════════════════════════════════ */
 @supports (padding-bottom: env(safe-area-inset-bottom)) {
-  .st-bottom-nav {
+  .st-bnav {
     height: calc(60px + env(safe-area-inset-bottom));
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
-@media (max-width: 767px) {
-  .st-main > div:last-child { padding-bottom: calc(80px + env(safe-area-inset-bottom,0px)); }
-}
-
-/* ── Neon card glow ────────────────────────────────────────────────────────── */
-html.theme-neon .st-card {
-  box-shadow: 0 0 12px rgba(34,211,238,0.06), inset 0 0 16px rgba(34,211,238,0.02);
-}
-
-/* ── Framer Motion layout perf hint ───────────────────────────────────────── */
-[data-framer-component-type] { will-change: transform; }
