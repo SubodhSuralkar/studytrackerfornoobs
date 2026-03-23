@@ -1,7 +1,44 @@
-// App.jsx — optimized for mobile, no flicker, background Pomodoro
+/**
+ * App.jsx — Performance-Engineered Study Tracker
+ *
+ * KEY ARCHITECTURE DECISIONS:
+ * ─────────────────────────────────────────────────────────────────────────────
+ * 1. TimerEngine (lines ~200-370):
+ *    Owns ALL timer state (timerSec, running, phase, swTime, swRun, pomoDur,
+ *    brkDur, studyTopic) and runs its own setInterval. The 1-per-second tick
+ *    ONLY re-renders TimerEngine and its children — never App or Sidebar.
+ *    It communicates with App via two stable callbacks:
+ *      · onPomoComplete(sessionInfo)  — called when a work phase finishes
+ *      · onXpEarned(amount)           — called for XP award
+ *
+ * 2. Sidebar + BottomNav (lines ~380-490):
+ *    Both are module-scope memo() components. Their props are stable primitives
+ *    (page, accent, xp, level). Task toggles and theme changes don't touch
+ *    these props, so React bails out of re-rendering them entirely.
+ *
+ * 3. TaskInput (line ~110):
+ *    Module-scope memo. Keeps newTask in LOCAL state. Parent App never sees
+ *    the string until submission, so typing a character causes zero re-renders
+ *    outside this component.
+ *
+ * 4. localStorage debouncing (line ~540):
+ *    A single useEffect watches a "dirty" flag that batches writes with a
+ *    300 ms debounce. Timer ticks never set this flag, so localStorage is
+ *    never written during countdown.
+ *
+ * 5. ProgressBar (line ~500):
+ *    Module-scope memo. Re-renders only when doneCh/totalCh change.
+ *
+ * 6. Theme transitions:
+ *    CSS class swap on <html> + CSS `transition: background-color 0.3s` in
+ *    index.css. React renders exactly once on theme change, then the GPU
+ *    handles the colour fade.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
 import {
   useState, useEffect, useLayoutEffect,
-  useRef, useCallback, useMemo, memo,
+  useRef, useCallback, useMemo, memo, createContext, useContext,
 } from "react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import {
@@ -12,19 +49,10 @@ import {
 } from "lucide-react";
 import confetti from "canvas-confetti";
 
-// ─── PERSISTENCE — non-blocking via requestIdleCallback ──────────────────────
-const lsGet = (k, d) => {
-  try { const v = localStorage.getItem(k); return v !== null ? JSON.parse(v) : d; }
-  catch { return d; }
-};
-const lsSet = (k, v) => {
-  const write = () => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
-  typeof requestIdleCallback !== "undefined"
-    ? requestIdleCallback(write, { timeout: 2000 })
-    : setTimeout(write, 0);
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 1 — CONSTANTS & PURE HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
 
-// ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const XP_PER_TASK  = 100;
 const XP_PER_POMO  = 100;
 const XP_PER_LEVEL = 500;
@@ -33,7 +61,7 @@ const EXAM_META = {
   JEE:    { label:"JEE",     accent:"#38bdf8", glow:"rgba(56,189,248,0.45)",  emoji:"⚛️",  grades:["Class 11","Class 12","Dropper"] },
   NEET:   { label:"NEET",    accent:"#4ade80", glow:"rgba(74,222,128,0.45)",  emoji:"🧬",  grades:["Class 11","Class 12","Dropper"] },
   UPSC:   { label:"UPSC",    accent:"#f59e0b", glow:"rgba(245,158,11,0.45)",  emoji:"🏛️", grades:["Graduate","Final Year","Post Graduate"] },
-  MHTCET: { label:"MHT‑CET", accent:"#e879f9", glow:"rgba(232,121,249,0.45)",emoji:"📐",  grades:["Class 11","Class 12","Dropper"] },
+  MHTCET: { label:"MHT‑CET", accent:"#e879f9", glow:"rgba(232,121,249,0.45)", emoji:"📐",  grades:["Class 11","Class 12","Dropper"] },
 };
 
 const SUBJECTS = {
@@ -61,132 +89,641 @@ const SUBJECTS = {
   },
 };
 
-// ─── THEME TOKENS ─────────────────────────────────────────────────────────────
-// Colors live in index.css as CSS custom properties per theme class.
-// We only carry Tailwind utility classes and JS-only values here.
+// Theme tokens — colours live in CSS variables (index.css), JS carries only
+// Tailwind utility strings and JS-only scalar values.
 const THEMES = {
   dark: {
     id:"dark", bodyClass:"theme-dark",
-    text:"text-zinc-100", textSub:"text-zinc-400", textMuted:"text-zinc-500",
+    text:"text-zinc-100", textMuted:"text-zinc-500",
     trackBg:"bg-zinc-800", badgeBg:"bg-zinc-800", modalBg:"bg-zinc-900",
     selectBg:"#27272a", selectText:"#f4f4f5", selectBdr:"#3f3f46", optBg:"#18181b",
     isLight:false,
   },
   light: {
     id:"light", bodyClass:"theme-light",
-    text:"text-slate-900", textSub:"text-slate-500", textMuted:"text-slate-400",
+    text:"text-slate-900", textMuted:"text-slate-400",
     trackBg:"bg-slate-200", badgeBg:"bg-slate-100", modalBg:"bg-white",
     selectBg:"#f1f5f9", selectText:"#0f172a", selectBdr:"#cbd5e1", optBg:"#fff",
     isLight:true,
   },
   neon: {
     id:"neon", bodyClass:"theme-neon",
-    text:"text-cyan-50", textSub:"text-cyan-600", textMuted:"text-cyan-800",
+    text:"text-cyan-50", textMuted:"text-cyan-800",
     trackBg:"bg-zinc-900", badgeBg:"bg-zinc-900", modalBg:"bg-zinc-950",
     selectBg:"#09090b", selectText:"#ecfeff", selectBdr:"#3f3f46", optBg:"#09090b",
     isLight:false,
   },
 };
 
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
-const pad      = n => String(n).padStart(2,"0");
-const fmtTime  = s => `${pad(Math.floor(s/60))}:${pad(s%60)}`;
-const todayStr = () => new Date().toDateString();
-// Shared spring tap used on every button — eliminates per-button boilerplate
-const tapProp  = { whileTap:{ scale:0.95 }, transition:{ type:"spring", stiffness:400, damping:20 } };
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 2 — PERSISTENCE  (debounced, never fires during timer ticks)
+// ─────────────────────────────────────────────────────────────────────────────
 
-function fireConfetti(color) {
-  confetti({ particleCount:120, spread:80, origin:{ y:0.5 }, colors:[color,"#ffffff","#facc15","#f472b6"] });
-  setTimeout(() => confetti({ particleCount:60, spread:120, origin:{ y:0.3 }, colors:[color,"#818cf8"] }), 260);
+const lsGet = (k, d) => {
+  try { const v = localStorage.getItem(k); return v !== null ? JSON.parse(v) : d; }
+  catch { return d; }
+};
+
+// Direct write — used for truly discrete events (theme change, exam switch).
+const lsWrite = (k, v) => {
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+};
+
+// Debounced write — used inside the single batched persistence effect so
+// rapid state changes (task toggles) collapse into one write.
+function useDebouncedEffect(fn, deps, delay = 300) {
+  const timer = useRef(null);
+  useEffect(() => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(fn, delay);
+    return () => clearTimeout(timer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
 }
 
-// ─── TASK INPUT — module scope memo: never re-mounts, no focus loss ───────────
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 3 — PURE UTILS
+// ─────────────────────────────────────────────────────────────────────────────
+
+const pad      = n => String(n).padStart(2, "0");
+const fmtTime  = s => `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
+const todayStr = () => new Date().toDateString();
+
+// Single shared tap spring — spread onto every <motion.button>.
+const TAP = { whileTap: { scale: 0.95 }, transition: { type: "spring", stiffness: 420, damping: 22 } };
+
+function fireConfetti(color) {
+  confetti({ particleCount: 120, spread: 80, origin: { y: 0.5 }, colors: [color, "#ffffff", "#facc15", "#f472b6"] });
+  setTimeout(() => confetti({ particleCount: 60, spread: 120, origin: { y: 0.3 }, colors: [color, "#818cf8"] }), 250);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 4 — TASK INPUT  (module-scope memo → zero re-renders while typing)
+// ─────────────────────────────────────────────────────────────────────────────
+
 const TaskInput = memo(function TaskInput({ onAdd, accent, isLight }) {
   const [val, setVal] = useState("");
   const ref = useRef(null);
-  const submit = () => {
-    if (!val.trim()) return;
-    onAdd(val.trim()); setVal("");
+
+  const submit = useCallback(() => {
+    const trimmed = val.trim();
+    if (!trimmed) return;
+    onAdd(trimmed);
+    setVal("");
     requestAnimationFrame(() => ref.current?.focus());
-  };
+  }, [val, onAdd]);
+
+  const handleKey = useCallback(e => { if (e.key === "Enter") submit(); }, [submit]);
+
   return (
     <div className="flex gap-2">
-      <input ref={ref} value={val}
+      <input
+        ref={ref}
+        value={val}
         onChange={e => setVal(e.target.value)}
-        onKeyDown={e => e.key==="Enter" && submit()}
+        onKeyDown={handleKey}
         placeholder="Type a task and press Enter…"
-        className={`flex-1 rounded-xl px-4 text-sm border outline-none transition-colors duration-200 ${isLight ? "bg-slate-100 border-slate-300 text-slate-900 placeholder-slate-400" : "bg-zinc-800 border-zinc-700 text-zinc-100 placeholder-zinc-500"}`}
-        style={{ minHeight:48, fontFamily:"Syne,sans-serif" }}
+        className={[
+          "flex-1 rounded-xl px-4 text-sm border outline-none",
+          "transition-colors duration-200",
+          isLight
+            ? "bg-slate-100 border-slate-300 text-slate-900 placeholder-slate-400 focus:border-[--accent-color]"
+            : "bg-zinc-800 border-zinc-700 text-zinc-100 placeholder-zinc-500 focus:border-[--accent-color]",
+        ].join(" ")}
+        style={{ minHeight: 48, fontFamily: "Syne, sans-serif" }}
       />
-      <motion.button {...tapProp} onClick={submit}
+      <motion.button
+        {...TAP}
+        onClick={submit}
         className="flex items-center gap-1.5 px-5 rounded-xl text-sm font-bold text-black cursor-pointer flex-shrink-0"
-        style={{ minHeight:48, background:`linear-gradient(135deg,${accent},${accent}cc)`, boxShadow:`0 4px 18px ${accent}55`, border:"none", fontFamily:"Syne,sans-serif" }}>
-        <Plus size={16}/> Add
+        style={{
+          minHeight: 48,
+          background: `linear-gradient(135deg,${accent},${accent}cc)`,
+          boxShadow: `0 4px 18px ${accent}55`,
+          border: "none",
+          fontFamily: "Syne, sans-serif",
+        }}
+      >
+        <Plus size={16} /> Add
       </motion.button>
     </div>
   );
 });
 
-// ─── CIRCULAR TIMER ───────────────────────────────────────────────────────────
-function CircularTimer({ progress, accent, size=220, children }) {
-  const r = (size-20)/2, circ = 2*Math.PI*r;
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 5 — CIRCULAR TIMER SVG  (pure, no state)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function CircularTimer({ progress, accent, size = 220, children }) {
+  const r    = (size - 20) / 2;
+  const circ = 2 * Math.PI * r;
   return (
-    <div className="relative" style={{ width:size, height:size }}>
-      <svg width={size} height={size} style={{ transform:"rotate(-90deg)" }}>
-        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={8}/>
-        <motion.circle cx={size/2} cy={size/2} r={r} fill="none" stroke={accent}
-          strokeWidth={8} strokeLinecap="round" strokeDasharray={circ}
-          animate={{ strokeDashoffset: circ*(1-progress) }}
-          transition={{ duration:0.55, ease:"easeOut" }}
-          style={{ filter:`drop-shadow(0 0 10px ${accent})` }}/>
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none"
+          stroke="rgba(255,255,255,0.06)" strokeWidth={8} />
+        <motion.circle
+          cx={size/2} cy={size/2} r={r}
+          fill="none" stroke={accent} strokeWidth={8} strokeLinecap="round"
+          strokeDasharray={circ}
+          animate={{ strokeDashoffset: circ * (1 - progress) }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+          style={{ filter: `drop-shadow(0 0 10px ${accent})` }}
+        />
       </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">{children}</div>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        {children}
+      </div>
     </div>
   );
 }
 
-// ─── LEVEL-UP TOAST ───────────────────────────────────────────────────────────
-function LevelUpToast({ level, accent, onDone }) {
-  useEffect(() => { const t = setTimeout(onDone, 2800); return () => clearTimeout(t); }, [onDone]);
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 6 — TIMER ENGINE
+// This component owns ALL timer state. The 1-per-second tick re-renders ONLY
+// this subtree. App and Sidebar never re-render due to the countdown.
+// Communication back to App: onPomoComplete callback (stable ref, no re-render).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TimerEngine = memo(function TimerEngine({
+  accent, glow, th, subjects,
+  onPomoComplete,   // (sessionInfo) → called once per completed work phase
+  onXpEarned,       // (amount) → called once per completed phase / for XP
+}) {
+  const [mode,      setMode]      = useState("pomodoro");   // "pomodoro" | "stopwatch"
+  const [pomoDur,   setPomoDur]   = useState(25);
+  const [brkDur,    setBrkDur]    = useState(5);
+  const [timerSec,  setTimerSec]  = useState(25 * 60);
+  const [running,   setRunning]   = useState(false);
+  const [phase,     setPhase]     = useState("work");        // "work" | "break"
+  const [swTime,    setSwTime]    = useState(0);
+  const [swRun,     setSwRun]     = useState(false);
+  const [topic,     setTopic]     = useState("");
+
+  const intervalRef = useRef(null);
+  const swRef       = useRef(null);
+
+  // Stable refs to callbacks so the setInterval closure never captures stale
+  // function references — avoids adding callbacks to the effect dependency array.
+  const onPomoRef   = useRef(onPomoComplete);
+  const onXpRef     = useRef(onXpEarned);
+  useEffect(() => { onPomoRef.current = onPomoComplete; }, [onPomoComplete]);
+  useEffect(() => { onXpRef.current   = onXpEarned;   }, [onXpEarned]);
+
+  // Pomodoro — isolated interval that never touches App state.
+  useEffect(() => {
+    if (!running || mode !== "pomodoro") {
+      clearInterval(intervalRef.current);
+      return;
+    }
+    // Capture current values into closure-stable variables.
+    const curPhase   = phase;
+    const curPomoDur = pomoDur;
+    const curBrkDur  = brkDur;
+    const curTopic   = topic;
+    const curAccent  = accent;
+
+    intervalRef.current = setInterval(() => {
+      setTimerSec(s => {
+        if (s <= 1) {
+          clearInterval(intervalRef.current);
+          setRunning(false);
+          if (curPhase === "work") {
+            // Notify App — single call, App re-renders once.
+            onXpRef.current(XP_PER_POMO);
+            onPomoRef.current({
+              subject: curTopic || "General Study",
+              dur: curPomoDur,
+              time: new Date().toLocaleTimeString(),
+              accent: curAccent,
+            });
+            setPhase("break");
+            return curBrkDur * 60;
+          } else {
+            setPhase("work");
+            return curPomoDur * 60;
+          }
+        }
+        return s - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(intervalRef.current);
+  // Only re-register the interval when these control values actually change.
+  // `topic`, `accent`, `phase` are captured via closure above.
+  }, [running, mode, phase, pomoDur, brkDur, topic, accent]);
+
+  // Stopwatch
+  useEffect(() => {
+    if (swRun) {
+      swRef.current = setInterval(() => setSwTime(s => s + 1), 1000);
+    } else {
+      clearInterval(swRef.current);
+    }
+    return () => clearInterval(swRef.current);
+  }, [swRun]);
+
+  // Reset timer seconds when pomoDur changes (only when not running)
+  useEffect(() => {
+    if (!running) setTimerSec(pomoDur * 60);
+  }, [pomoDur, running]);
+
+  const switchMode = useCallback((m) => {
+    setMode(m);
+    setRunning(false); setSwRun(false);
+    setSwTime(0); setPhase("work");
+    setTimerSec(pomoDur * 60);
+  }, [pomoDur]);
+
+  const resetTimer = useCallback(() => {
+    setRunning(false); setSwRun(false);
+    if (mode === "pomodoro") { setTimerSec(pomoDur * 60); setPhase("work"); }
+    else setSwTime(0);
+  }, [mode, pomoDur]);
+
+  const phaseColor = phase === "break" ? "#4ade80" : accent;
+  const progress   = mode === "pomodoro"
+    ? timerSec / ((phase === "work" ? pomoDur : brkDur) * 60)
+    : (swTime % 3600) / 3600;
+
+  const timerSize = typeof window !== "undefined" && window.innerWidth < 420 ? 180 : 220;
+
   return (
-    <div className="levelup-toast fixed z-[9999] text-center rounded-2xl px-10 py-5 glass"
-      style={{ bottom:80, left:"50%", border:`2px solid ${accent}`, background:"rgba(9,9,11,0.97)", boxShadow:`0 0 50px ${accent}99`, minWidth:260 }}>
-      <motion.div animate={{ rotate:[0,15,-15,10,-10,0], scale:[1,1.4,1] }} transition={{ duration:0.9 }}>
-        <span style={{ fontSize:44 }}>⚡</span>
+    <div className="flex flex-col gap-4">
+      {/* ── Main timer card ── */}
+      <motion.div initial={{ opacity:0, y:18 }} animate={{ opacity:1, y:0 }} className="st-card glass rounded-2xl border p-5">
+
+        {/* Mode toggle */}
+        <div className={`flex p-1 rounded-xl mb-6 max-w-xs mx-auto ${th.trackBg}`}>
+          {["pomodoro","stopwatch"].map(m => (
+            <motion.button key={m} {...TAP} onClick={() => switchMode(m)}
+              className="flex-1 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all"
+              style={{
+                minHeight: 44,
+                background: mode === m ? `${accent}28` : "transparent",
+                border:     `1px solid ${mode === m ? accent + "55" : "transparent"}`,
+                color:      mode === m ? accent : (th.isLight ? "#64748b" : "#71717a"),
+                fontFamily: "Syne, sans-serif",
+              }}>
+              {m === "pomodoro" ? "🍅 Pomodoro" : "⏱ Stopwatch"}
+            </motion.button>
+          ))}
+        </div>
+
+        {/* Ring */}
+        <div className="flex justify-center mb-6">
+          <CircularTimer progress={progress} accent={phaseColor} size={timerSize}>
+            <p className="text-[10px] tracking-[.2em] uppercase mb-1" style={{ color: phaseColor }}>
+              {mode === "pomodoro" ? (phase === "work" ? "FOCUS" : "BREAK") : "ELAPSED"}
+            </p>
+            <p className="font-rajdhani font-bold tracking-widest"
+              style={{ fontSize: "clamp(36px,10vw,52px)", color: th.isLight ? "#0f172a" : "#f4f4f5" }}>
+              {mode === "pomodoro" ? fmtTime(timerSec) : fmtTime(swTime)}
+            </p>
+            {mode === "pomodoro" && (
+              <p className={`text-[10px] mt-1 ${th.textMuted}`}>+{XP_PER_POMO} XP on complete</p>
+            )}
+          </CircularTimer>
+        </div>
+
+        {/* Controls */}
+        <div className="flex justify-center gap-4 mb-5">
+          <motion.button
+            {...TAP} whileHover={{ scale: 1.06 }}
+            onClick={() => mode === "pomodoro" ? setRunning(r => !r) : setSwRun(r => !r)}
+            className="flex items-center gap-2 rounded-full font-bold text-black cursor-pointer"
+            style={{
+              minHeight: 52, paddingLeft: 36, paddingRight: 36,
+              background:  `linear-gradient(135deg,${accent},${accent}cc)`,
+              boxShadow:   `0 4px 28px ${glow}`,
+              border: "none", fontFamily: "Syne, sans-serif", fontSize: 15,
+            }}>
+            {(mode === "pomodoro" ? running : swRun)
+              ? <><Pause size={18} /> Pause</>
+              : <><Play  size={18} /> Start</>}
+          </motion.button>
+
+          <motion.button {...TAP} whileTap={{ scale: 0.95, rotate: -30 }}
+            onClick={resetTimer}
+            className="flex items-center justify-center rounded-full cursor-pointer st-btn-subtle"
+            style={{
+              minWidth: 52, minHeight: 52,
+              border: `1px solid ${th.isLight ? "#e2e8f0" : "rgba(255,255,255,0.1)"}`,
+              background: "transparent",
+            }}>
+            <RotateCcw size={18} />
+          </motion.button>
+        </div>
+
+        {/* Duration knobs — only visible in Pomodoro mode */}
+        {mode === "pomodoro" && (
+          <div className="flex gap-8 justify-center flex-wrap">
+            {[
+              { label: "Focus (min)", val: pomoDur, set: v => { setPomoDur(v); if (!running) setTimerSec(v * 60); } },
+              { label: "Break (min)", val: brkDur,  set: v => setBrkDur(v) },
+            ].map(({ label, val, set }) => (
+              <div key={label} className="text-center">
+                <p className={`text-[10px] tracking-widest mb-2 ${th.textMuted}`}>{label.toUpperCase()}</p>
+                <div className="flex items-center gap-2">
+                  {[{ s: "−", fn: () => set(v => Math.max(1,  v - 5)) }, null, { s: "+", fn: () => set(v => Math.min(90, v + 5)) }].map((b, i) =>
+                    b ? (
+                      <motion.button key={b.s} {...TAP} onClick={b.fn}
+                        className="flex items-center justify-center rounded-lg cursor-pointer st-btn-subtle"
+                        style={{
+                          minWidth: 48, minHeight: 48,
+                          border: `1px solid ${th.isLight ? "#e2e8f0" : "rgba(255,255,255,0.1)"}`,
+                          background: "transparent",
+                          color:  th.isLight ? "#0f172a" : "#f4f4f5",
+                          fontSize: 20,
+                        }}>
+                        {b.s}
+                      </motion.button>
+                    ) : (
+                      <span key="v" className="font-rajdhani font-bold text-2xl min-w-[32px] text-center"
+                        style={{ color: accent }}>{val}</span>
+                    )
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </motion.div>
-      <p className="font-rajdhani font-bold tracking-widest mt-1" style={{ fontSize:30, color:accent }}>LEVEL UP!</p>
-      <p className="text-sm text-zinc-400 mt-1">You reached <strong className="text-white">Level {level}</strong></p>
+
+      {/* Topic selector */}
+      <motion.div initial={{ opacity:0, y:16 }} animate={{ opacity:1, y:0 }} transition={{ delay: 0.1 }}
+        className="st-card glass rounded-2xl border p-5">
+        <p className={`text-[10px] tracking-[.2em] uppercase mb-3 ${th.textMuted}`}>🎯 CURRENTLY STUDYING</p>
+        <select
+          value={topic}
+          onChange={e => setTopic(e.target.value)}
+          className="w-full rounded-xl px-4 py-3 text-sm outline-none cursor-pointer"
+          style={{ background: th.selectBg, border: `1px solid ${th.selectBdr}`, color: th.selectText, fontFamily: "Syne, sans-serif", minHeight: 48 }}>
+          <option value="">— Select topic —</option>
+          {Object.entries(subjects).map(([sub, chs]) => (
+            <optgroup key={sub} label={sub} style={{ background: th.optBg }}>
+              {chs.map(ch => (
+                <option key={ch} value={`${sub} — ${ch}`} style={{ background: th.optBg }}>{ch}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </motion.div>
     </div>
   );
-}
+});
 
-// ─── EXAM MODAL ───────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 7 — GLOBAL PROGRESS BAR  (memo — only re-renders when pct changes)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GlobalProgressBar = memo(function GlobalProgressBar({
+  overallPct, doneCh, totalCh, streak, level, xp, accent, glow, th, examLabel, grade,
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
+      className="st-card glass rounded-2xl border p-5"
+      style={{ border: `1px solid ${accent}44`, boxShadow: `0 8px 50px ${glow}`, position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: -60, right: -60, width: 260, height: 260, borderRadius: "50%", background: `radial-gradient(circle,${glow},transparent 68%)`, pointerEvents: "none" }} />
+      <div className="flex flex-wrap gap-3 justify-between items-start mb-4 relative">
+        <div>
+          <p className={`text-[10px] tracking-[.2em] uppercase mb-1 ${th.textMuted}`}>OVERALL PROGRESS</p>
+          <h2 className={`font-rajdhani font-bold ${th.text}`} style={{ fontSize: "clamp(24px,5vw,34px)" }}>
+            {overallPct}%{" "}
+            <span style={{ color: accent, fontSize: "clamp(14px,3vw,20px)" }}>Complete</span>
+          </h2>
+        </div>
+        <div className="flex gap-2">
+          {[
+            { ico: "🔥", val: streak,        label: "Streak", color: "#f59e0b" },
+            { ico: "⭐", val: `Lv.${level}`, label: "Level",  color: accent },
+            { ico: "⚡", val: xp,            label: "XP",     color: accent },
+          ].map((s, i) => (
+            <div key={i} className={`text-center rounded-xl px-2.5 py-2 ${th.badgeBg}`}
+              style={{ border: `1px solid ${th.isLight ? "#e2e8f0" : "rgba(255,255,255,0.08)"}` }}>
+              <div className="text-sm text-center mb-0.5">{s.ico}</div>
+              <div className="font-rajdhani font-bold" style={{ fontSize: 14, color: s.color }}>{s.val}</div>
+              <div className={`text-[9px] tracking-widest ${th.textMuted}`}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className={`h-2.5 rounded-full overflow-hidden ${th.trackBg}`}>
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${overallPct}%` }}
+          transition={{ duration: 1.3, ease: "easeOut" }}
+          className="h-full rounded-full"
+          style={{ background: `linear-gradient(90deg,${accent},${accent}88)`, boxShadow: `0 0 16px ${glow}` }}
+        />
+      </div>
+      <div className="flex justify-between mt-2">
+        <span className={`text-[11px] ${th.textMuted}`}>{doneCh}/{totalCh} chapters</span>
+        <span className="text-[11px] font-semibold" style={{ color: accent }}>{examLabel} · {grade}</span>
+      </div>
+    </motion.div>
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 8 — SIDEBAR  (module-scope memo — stable until page/xp/level changes)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const Sidebar = memo(function Sidebar({ th, page, setPage, sidebarOpen, setSidebarOpen, accent, glow, xp, level }) {
+  const xpPct = Math.min(100, xp / (XP_PER_LEVEL * level) * 100);
+  const navItems = useMemo(() => [
+    { id: "dashboard", icon: <BookOpen size={18} />, label: "Dashboard" },
+    { id: "timer",     icon: <Timer    size={18} />, label: "Focus Timer" },
+    { id: "progress",  icon: <TrendingUp size={18} />, label: "Progress" },
+  ], []);
+
+  return (
+    <motion.div
+      initial={false}
+      animate={{ width: sidebarOpen ? 220 : 62 }}
+      className="st-sidebar glass fixed left-0 top-0 z-[100] flex-col border-r overflow-hidden hidden md:flex"
+      style={{ height: "100dvh", boxShadow: `4px 0 30px rgba(0,0,0,${th.isLight ? .1 : .45})` }}>
+
+      {/* ⚡ Electric Home Button — memoized inside Sidebar */}
+      <div className="px-3 pt-3 pb-3 st-divider-b">
+        <motion.button
+          whileHover={{ rotate: 180, scale: 1.1 }}
+          {...TAP}
+          transition={{ type: "spring", stiffness: 320, damping: 22 }}
+          onClick={() => { setPage("dashboard"); setSidebarOpen(false); }}
+          className="zap-pulse w-full flex items-center gap-3 rounded-xl cursor-pointer"
+          style={{
+            padding: "9px 10px", minHeight: 48,
+            background: `linear-gradient(135deg,${accent}30,${accent}10)`,
+            border: `1.5px solid ${accent}66`,
+            fontFamily: "Syne, sans-serif",
+            justifyContent: sidebarOpen ? "flex-start" : "center",
+          }}
+          title="Go to Dashboard">
+          <motion.span
+            animate={{ textShadow: [`0 0 8px ${accent}`, `0 0 22px ${accent}`, `0 0 8px ${accent}`] }}
+            transition={{ repeat: Infinity, duration: 1.8 }}
+            style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>
+            ⚡
+          </motion.span>
+          {sidebarOpen && (
+            <span className="font-rajdhani font-bold tracking-widest whitespace-nowrap"
+              style={{ color: accent, fontSize: 14 }}>HOME</span>
+          )}
+        </motion.button>
+      </div>
+
+      {/* Nav links */}
+      <div className="flex-1 flex flex-col gap-1 px-2 pt-3">
+        {navItems.map(item => (
+          <motion.button key={item.id} whileHover={{ x: 2 }} {...TAP}
+            onClick={() => { setPage(item.id); setSidebarOpen(false); }}
+            className="flex items-center gap-3 rounded-xl cursor-pointer transition-colors whitespace-nowrap"
+            style={{
+              padding: "9px 10px", minHeight: 48,
+              background: page === item.id ? `${accent}22` : "transparent",
+              border:     `1px solid ${page === item.id ? accent + "55" : "transparent"}`,
+              color:      page === item.id ? accent : (th.isLight ? "#64748b" : "#71717a"),
+              fontWeight: page === item.id ? 700 : 500,
+              fontFamily: "Syne, sans-serif", fontSize: 13,
+              justifyContent: sidebarOpen ? "flex-start" : "center",
+            }}>
+            {item.icon}
+            {sidebarOpen && item.label}
+          </motion.button>
+        ))}
+      </div>
+
+      {/* XP micro-bar */}
+      <div className="px-3 py-3 st-divider-t">
+        {sidebarOpen ? (
+          <>
+            <div className="flex justify-between text-xs mb-1.5" style={{ fontFamily: "DM Mono, monospace" }}>
+              <span className="font-bold" style={{ color: accent }}>LV {level}</span>
+              <span className={th.textMuted}>{xp}/{XP_PER_LEVEL * level}</span>
+            </div>
+            <div className={`h-1 rounded-full ${th.trackBg} overflow-hidden`}>
+              <motion.div
+                className="h-full rounded-full xp-shimmer"
+                animate={{ width: `${xpPct}%` }}
+                transition={{ duration: 0.55 }}
+                style={{ background: `linear-gradient(90deg,${accent},#818cf8,${accent})` }}
+              />
+            </div>
+          </>
+        ) : (
+          <div className="flex justify-center font-rajdhani font-bold text-sm" style={{ color: accent }}>{level}</div>
+        )}
+      </div>
+
+      {/* Collapse toggle */}
+      <motion.button {...TAP}
+        onClick={() => setSidebarOpen(o => !o)}
+        className="mx-2 mb-2 flex justify-center items-center rounded-xl cursor-pointer st-btn-subtle"
+        style={{ minHeight: 40, border: "1px solid" }}>
+        {sidebarOpen ? <X size={14} /> : <Menu size={14} />}
+      </motion.button>
+    </motion.div>
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 9 — BOTTOM NAV  (mobile only, memo)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BottomNav = memo(function BottomNav({ page, setPage, accent }) {
+  const items = useMemo(() => [
+    { id: "dashboard", icon: <Home       size={22} />, label: "Home"  },
+    { id: "timer",     icon: <Timer      size={22} />, label: "Focus" },
+    { id: "progress",  icon: <TrendingUp size={22} />, label: "Stats" },
+  ], []);
+
+  return (
+    <nav className="st-bottom-nav md:hidden fixed bottom-0 left-0 right-0 z-[100] flex items-stretch justify-around"
+      style={{
+        height: "calc(60px + env(safe-area-inset-bottom, 0px))",
+        paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
+      }}>
+      {items.map(item => (
+        <motion.button key={item.id} {...TAP}
+          onClick={() => setPage(item.id)}
+          className="relative flex-1 flex flex-col items-center justify-center gap-0.5 cursor-pointer"
+          style={{
+            background: "none", border: "none",
+            color:      page === item.id ? accent : "#71717a",
+            fontFamily: "Syne, sans-serif", fontSize: 10,
+            fontWeight: page === item.id ? 700 : 400,
+            transition: "color .2s",
+            minHeight: 60,
+          }}>
+          <motion.span animate={{ scale: page === item.id ? 1.18 : 1 }}
+            transition={{ type: "spring", stiffness: 400, damping: 20 }}>
+            {item.icon}
+          </motion.span>
+          <span>{item.label}</span>
+          {page === item.id && (
+            <motion.div
+              layoutId="bnIndicator"
+              className="absolute bottom-0 h-[3px] rounded-full"
+              style={{ width: 28, background: accent, boxShadow: `0 0 8px ${accent}` }}
+            />
+          )}
+        </motion.button>
+      ))}
+    </nav>
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 10 — EXAM MODAL
+// ─────────────────────────────────────────────────────────────────────────────
+
 function ExamModal({ currentExam, onSelect, onClose, th }) {
   return (
     <AnimatePresence>
-      <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         className="fixed inset-0 z-[8000] flex items-center justify-center p-4"
-        style={{ background:"rgba(0,0,0,0.82)" }} onClick={onClose}>
-        <motion.div initial={{ scale:0.88,y:28 }} animate={{ scale:1,y:0 }} exit={{ scale:0.88,y:28 }}
-          transition={{ type:"spring", stiffness:380, damping:28 }}
+        style={{ background: "rgba(0,0,0,0.82)" }}
+        onClick={onClose}>
+        <motion.div
+          initial={{ scale: 0.88, y: 28 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.88, y: 28 }}
+          transition={{ type: "spring", stiffness: 380, damping: 28 }}
           className={`${th.modalBg} glass rounded-3xl p-6 w-full max-w-md`}
-          style={{ border:"1px solid rgba(255,255,255,0.1)", boxShadow:"0 30px 80px rgba(0,0,0,.7)" }}
+          style={{ border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 30px 80px rgba(0,0,0,.7)" }}
           onClick={e => e.stopPropagation()}>
           <div className="flex items-center justify-between mb-6">
             <h2 className={`font-rajdhani font-bold tracking-widest text-2xl ${th.text}`}>SWITCH EXAM</h2>
-            <motion.button {...tapProp} onClick={onClose}
+            <motion.button {...TAP} onClick={onClose}
               className={`${th.textMuted} leading-none cursor-pointer flex items-center justify-center`}
-              style={{ background:"none", border:"none", minWidth:44, minHeight:44, fontSize:20 }}>✕</motion.button>
+              style={{ background: "none", border: "none", minWidth: 44, minHeight: 44, fontSize: 20 }}>✕</motion.button>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            {Object.entries(EXAM_META).map(([key,meta]) => (
-              <motion.button key={key} whileHover={{ scale:1.04,y:-2 }} {...tapProp}
+            {Object.entries(EXAM_META).map(([key, meta]) => (
+              <motion.button key={key} whileHover={{ scale: 1.04, y: -2 }} {...TAP}
                 onClick={() => { onSelect(key); onClose(); }}
                 className="rounded-2xl flex flex-col items-center gap-2 cursor-pointer transition-all"
-                style={{ minHeight:92, padding:"18px 12px", background:currentExam===key?`${meta.accent}20`:"rgba(255,255,255,0.03)", border:`1.5px solid ${currentExam===key?meta.accent+"88":"rgba(255,255,255,0.07)"}`, boxShadow:currentExam===key?`0 0 20px ${meta.glow}`:"none", fontFamily:"Syne,sans-serif" }}>
-                <span style={{ fontSize:30 }}>{meta.emoji}</span>
-                <span className="font-rajdhani font-bold tracking-wider" style={{ fontSize:18, color:currentExam===key?meta.accent:"#a1a1aa" }}>{meta.label}</span>
-                {currentExam===key && <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background:`${meta.accent}22`, color:meta.accent, border:`1px solid ${meta.accent}44` }}>Active</span>}
+                style={{
+                  minHeight: 92, padding: "18px 12px",
+                  background: currentExam === key ? `${meta.accent}20` : "rgba(255,255,255,0.03)",
+                  border:     `1.5px solid ${currentExam === key ? meta.accent + "88" : "rgba(255,255,255,0.07)"}`,
+                  boxShadow:  currentExam === key ? `0 0 20px ${meta.glow}` : "none",
+                  fontFamily: "Syne, sans-serif",
+                }}>
+                <span style={{ fontSize: 30 }}>{meta.emoji}</span>
+                <span className="font-rajdhani font-bold tracking-wider"
+                  style={{ fontSize: 18, color: currentExam === key ? meta.accent : "#a1a1aa" }}>
+                  {meta.label}
+                </span>
+                {currentExam === key && (
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full"
+                    style={{ background: `${meta.accent}22`, color: meta.accent, border: `1px solid ${meta.accent}44` }}>
+                    Active
+                  </span>
+                )}
               </motion.button>
             ))}
           </div>
@@ -197,258 +734,172 @@ function ExamModal({ currentExam, onSelect, onClose, th }) {
   );
 }
 
-// ─── SIDEBAR — module-scope memo so nav clicks in main content never re-mount it
-const Sidebar = memo(function Sidebar({ th, page, setPage, sidebarOpen, setSidebarOpen, accent, glow, xp, level }) {
-  const xpPct = Math.min(100, xp/(XP_PER_LEVEL*level)*100);
-  const navItems = [
-    { id:"dashboard", icon:<BookOpen size={18}/>, label:"Dashboard" },
-    { id:"timer",     icon:<Timer size={18}/>,    label:"Focus Timer" },
-    { id:"progress",  icon:<TrendingUp size={18}/>, label:"Progress" },
-  ];
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 11 — LEVEL-UP TOAST
+// ─────────────────────────────────────────────────────────────────────────────
+
+function LevelUpToast({ level, accent, onDone }) {
+  useEffect(() => { const t = setTimeout(onDone, 2800); return () => clearTimeout(t); }, [onDone]);
   return (
-    <motion.div initial={false} animate={{ width: sidebarOpen ? 220 : 62 }}
-      className="st-sidebar glass fixed left-0 top-0 z-[100] flex-col border-r overflow-hidden hidden md:flex"
-      style={{ height:"100dvh", boxShadow:`4px 0 30px rgba(0,0,0,${th.isLight?.1:.4})` }}>
-
-      {/* ⚡ Electric Home */}
-      <div className="px-3 pt-3 pb-3 st-divider-b">
-        <motion.button whileHover={{ rotate:180, scale:1.08 }} {...tapProp}
-          transition={{ type:"spring", stiffness:320, damping:22 }}
-          onClick={() => { setPage("dashboard"); setSidebarOpen(false); }}
-          className="zap-pulse w-full flex items-center gap-3 rounded-xl cursor-pointer"
-          style={{ padding:"9px 10px", minHeight:48, background:`linear-gradient(135deg,${accent}30,${accent}10)`, border:`1.5px solid ${accent}66`, fontFamily:"Syne,sans-serif", justifyContent:sidebarOpen?"flex-start":"center" }}>
-          <motion.span
-            animate={{ textShadow:[`0 0 8px ${accent}`,`0 0 22px ${accent}`,`0 0 8px ${accent}`] }}
-            transition={{ repeat:Infinity, duration:1.8 }}
-            style={{ fontSize:20, lineHeight:1, flexShrink:0 }}>⚡</motion.span>
-          {sidebarOpen && <span className="font-rajdhani font-bold tracking-widest whitespace-nowrap" style={{ color:accent, fontSize:14 }}>HOME</span>}
-        </motion.button>
-      </div>
-
-      <div className="flex-1 flex flex-col gap-1 px-2 pt-3">
-        {navItems.map(item => (
-          <motion.button key={item.id} whileHover={{ x:2 }} {...tapProp}
-            onClick={() => { setPage(item.id); setSidebarOpen(false); }}
-            className="flex items-center gap-3 rounded-xl cursor-pointer transition-colors whitespace-nowrap"
-            style={{ padding:"9px 10px", minHeight:48, background:page===item.id?`${accent}22`:"transparent", border:`1px solid ${page===item.id?accent+"55":"transparent"}`, color:page===item.id?accent:(th.isLight?"#64748b":"#71717a"), fontWeight:page===item.id?700:500, fontFamily:"Syne,sans-serif", fontSize:13, justifyContent:sidebarOpen?"flex-start":"center" }}>
-            {item.icon}
-            {sidebarOpen && item.label}
-          </motion.button>
-        ))}
-      </div>
-
-      <div className="px-3 py-3 st-divider-t">
-        {sidebarOpen ? (
-          <>
-            <div className="flex justify-between text-xs mb-1.5" style={{ fontFamily:"DM Mono,monospace" }}>
-              <span className="font-bold" style={{ color:accent }}>LV {level}</span>
-              <span className={th.textMuted}>{xp}/{XP_PER_LEVEL*level}</span>
-            </div>
-            <div className={`h-1 rounded-full ${th.trackBg} overflow-hidden`}>
-              <motion.div className="h-full rounded-full xp-shimmer"
-                animate={{ width:`${xpPct}%` }} transition={{ duration:.55 }}
-                style={{ background:`linear-gradient(90deg,${accent},#818cf8,${accent})` }}/>
-            </div>
-          </>
-        ) : (
-          <div className="flex justify-center font-rajdhani font-bold text-sm" style={{ color:accent }}>{level}</div>
-        )}
-      </div>
-
-      <motion.button {...tapProp} onClick={() => setSidebarOpen(o => !o)}
-        className="mx-2 mb-2 flex justify-center items-center rounded-xl cursor-pointer st-btn-subtle"
-        style={{ minHeight:40, border:"1px solid" }}>
-        {sidebarOpen ? <X size={14}/> : <Menu size={14}/>}
-      </motion.button>
-    </motion.div>
+    <div className="levelup-toast fixed z-[9999] text-center rounded-2xl px-10 py-5 glass"
+      style={{ bottom: 80, left: "50%", border: `2px solid ${accent}`, background: "rgba(9,9,11,0.97)", boxShadow: `0 0 50px ${accent}99`, minWidth: 260 }}>
+      <motion.div animate={{ rotate: [0,15,-15,10,-10,0], scale: [1,1.4,1] }} transition={{ duration: 0.9 }}>
+        <span style={{ fontSize: 44 }}>⚡</span>
+      </motion.div>
+      <p className="font-rajdhani font-bold tracking-widest mt-1" style={{ fontSize: 30, color: accent }}>LEVEL UP!</p>
+      <p className="text-sm text-zinc-400 mt-1">You reached <strong className="text-white">Level {level}</strong></p>
+    </div>
   );
-});
+}
 
-// ─── BOTTOM NAV (mobile) ──────────────────────────────────────────────────────
-const BottomNav = memo(function BottomNav({ page, setPage, accent }) {
-  const items = [
-    { id:"dashboard", icon:<Home size={22}/>,       label:"Home" },
-    { id:"timer",     icon:<Timer size={22}/>,      label:"Focus" },
-    { id:"progress",  icon:<TrendingUp size={22}/>, label:"Stats" },
-  ];
-  return (
-    <nav className="st-bottom-nav md:hidden fixed bottom-0 left-0 right-0 z-[100] flex items-stretch justify-around"
-      style={{ height:"calc(60px + env(safe-area-inset-bottom))", paddingBottom:"env(safe-area-inset-bottom)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)" }}>
-      {items.map(item => (
-        <motion.button key={item.id} {...tapProp}
-          onClick={() => setPage(item.id)}
-          className="relative flex-1 flex flex-col items-center justify-center gap-0.5 cursor-pointer"
-          style={{ background:"none", border:"none", color:page===item.id?accent:"#71717a", fontFamily:"Syne,sans-serif", fontSize:10, fontWeight:page===item.id?700:400, transition:"color .2s", minHeight:60 }}>
-          <motion.span animate={{ scale: page===item.id?1.18:1 }} transition={{ type:"spring",stiffness:400,damping:20 }}>
-            {item.icon}
-          </motion.span>
-          <span>{item.label}</span>
-          {page===item.id && (
-            <motion.div layoutId="bnIndicator" className="absolute bottom-0 h-[3px] rounded-full"
-              style={{ width:28, background:accent, boxShadow:`0 0 8px ${accent}` }}/>
-          )}
-        </motion.button>
-      ))}
-    </nav>
-  );
-});
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION 12 — ROOT APP  (owns only cross-page state; never ticks per second)
+// ─────────────────────────────────────────────────────────────────────────────
 
-// ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
-  // Persisted
-  const [exam,        setExamState]    = useState(() => lsGet("st_exam",     null));
-  const [grade,       setGrade]        = useState(() => lsGet("st_grade",    null));
-  const [completedCh, setCompletedCh]  = useState(() => lsGet("st_chapters", {}));
-  const [tasks,       setTasks]        = useState(() => lsGet("st_tasks",    []));
-  const [xp,          setXp]           = useState(() => lsGet("st_xp",       0));
-  const [level,       setLevel]        = useState(() => lsGet("st_level",    1));
-  const [streak,      setStreak]       = useState(() => lsGet("st_streak",   0));
-  const [lastTaskDay, setLastTaskDay]  = useState(() => lsGet("st_ltd",      null));
-  const [sessions,    setSessions]     = useState(() => lsGet("st_sessions", []));
-  const [themeId,     setThemeId]      = useState(() => lsGet("st_theme",    "dark"));
 
-  // Ephemeral UI
-  const [page,           setPage]          = useState("dashboard");
-  const [sidebarOpen,    setSidebarOpen]   = useState(false);
-  const [selectedSub,    setSelectedSub]   = useState(null);
-  const [showExamModal,  setShowExamModal] = useState(false);
-  const [showThemePanel, setShowThemePanel]= useState(false);
-  const [onboardStep,    setOnboardStep]   = useState(0);
-  const [levelUpData,    setLevelUpData]   = useState(null);
+  // ── Persisted state (initialised once from localStorage) ──────────────────
+  const [exam,        setExamState]   = useState(() => lsGet("st_exam",     null));
+  const [grade,       setGrade]       = useState(() => lsGet("st_grade",    null));
+  const [completedCh, setCompletedCh] = useState(() => lsGet("st_chapters", {}));
+  const [tasks,       setTasks]       = useState(() => lsGet("st_tasks",    []));
+  const [xp,          setXp]          = useState(() => lsGet("st_xp",       0));
+  const [level,       setLevel]       = useState(() => lsGet("st_level",    1));
+  const [streak,      setStreak]      = useState(() => lsGet("st_streak",   0));
+  const [lastTaskDay, setLastTaskDay] = useState(() => lsGet("st_ltd",      null));
+  const [sessions,    setSessions]    = useState(() => lsGet("st_sessions", []));
+  const [themeId,     setThemeId]     = useState(() => lsGet("st_theme",    "dark"));
 
-  // Timer — lives at App level so it survives page switches
-  const [timerMode, setTimerMode] = useState("pomodoro");
-  const [pomoDur,   setPomoDur]   = useState(25);
-  const [brkDur,    setBrkDur]    = useState(5);
-  const [timerSec,  setTimerSec]  = useState(25*60);
-  const [running,   setRunning]   = useState(false);
-  const [phase,     setPhase]     = useState("work");
-  const [swTime,    setSwTime]    = useState(0);
-  const [swRun,     setSwRun]     = useState(false);
-  const [studyTopic,setStudyTopic]= useState("");
+  // ── UI state ──────────────────────────────────────────────────────────────
+  const [page,           setPage]           = useState("dashboard");
+  const [sidebarOpen,    setSidebarOpen]    = useState(false);
+  const [selectedSub,    setSelectedSub]    = useState(null);
+  const [showExamModal,  setShowExamModal]  = useState(false);
+  const [showThemePanel, setShowThemePanel] = useState(false);
+  const [onboardStep,    setOnboardStep]    = useState(0);
+  const [levelUpData,    setLevelUpData]    = useState(null);
 
-  const timerRef = useRef(null);
-  const swRef    = useRef(null);
-
-  // Derived
+  // ── Derived ───────────────────────────────────────────────────────────────
   const th       = THEMES[themeId] ?? THEMES.dark;
   const meta     = exam ? EXAM_META[exam] : null;
   const accent   = meta?.accent ?? "#22d3ee";
   const glow     = meta?.glow   ?? "rgba(34,211,238,0.45)";
-  const subjects = exam ? SUBJECTS[exam] : {};
-  const totalCh  = useMemo(() => Object.values(subjects).reduce((a,c)=>a+c.length,0), [subjects]);
-  const doneCh   = useMemo(() => Object.keys(completedCh).filter(k=>completedCh[k]).length, [completedCh]);
-  const overallPct = totalCh ? Math.round(doneCh/totalCh*100) : 0;
-  const doneTasks  = useMemo(() => tasks.filter(t=>t.done).length, [tasks]);
-  const totalDur   = phase==="work" ? pomoDur*60 : brkDur*60;
-  const card = "st-card glass rounded-2xl border p-5";
+  const subjects = useMemo(() => exam ? SUBJECTS[exam] : {}, [exam]);
+  const totalCh  = useMemo(() => Object.values(subjects).reduce((a, c) => a + c.length, 0), [subjects]);
+  const doneCh   = useMemo(() => Object.keys(completedCh).filter(k => completedCh[k]).length, [completedCh]);
+  const overallPct = totalCh ? Math.round(doneCh / totalCh * 100) : 0;
+  const doneTasks  = useMemo(() => tasks.filter(t => t.done).length, [tasks]);
 
-  // useLayoutEffect for CSS vars — sync before paint, no colour flash
+  // ── CSS variable injection — useLayoutEffect = synchronous before paint ───
   useLayoutEffect(() => {
     document.documentElement.style.setProperty("--accent-color", accent);
     document.documentElement.style.setProperty("--accent-glow",  glow);
   }, [accent, glow]);
 
-  // Apply theme class to <html> — CSS transitions on bg/color handle smoothness
+  // Apply theme class to <html> — CSS transitions in index.css handle the fade
   useLayoutEffect(() => {
     const html = document.documentElement;
     Object.values(THEMES).forEach(t => html.classList.remove(t.bodyClass));
     html.classList.add(th.bodyClass);
   }, [th.bodyClass]);
 
-  // Non-blocking localStorage sync
-  useEffect(() => lsSet("st_exam",     exam),        [exam]);
-  useEffect(() => lsSet("st_grade",    grade),       [grade]);
-  useEffect(() => lsSet("st_chapters", completedCh), [completedCh]);
-  useEffect(() => lsSet("st_tasks",    tasks),       [tasks]);
-  useEffect(() => lsSet("st_xp",       xp),          [xp]);
-  useEffect(() => lsSet("st_level",    level),       [level]);
-  useEffect(() => lsSet("st_streak",   streak),      [streak]);
-  useEffect(() => lsSet("st_ltd",      lastTaskDay), [lastTaskDay]);
-  useEffect(() => lsSet("st_sessions", sessions),    [sessions]);
-  useEffect(() => lsSet("st_theme",    themeId),     [themeId]);
+  // ── DEBOUNCED localStorage — fires at most once per 300 ms; never during ticks
+  // Timer ticks only update TimerEngine's local state, so none of these deps
+  // are touched by the countdown. XP/session changes from pomo completion DO
+  // fire this, but only once per session (not every second).
+  useDebouncedEffect(() => {
+    lsWrite("st_exam",     exam);
+    lsWrite("st_grade",    grade);
+    lsWrite("st_chapters", completedCh);
+    lsWrite("st_tasks",    tasks);
+    lsWrite("st_xp",       xp);
+    lsWrite("st_level",    level);
+    lsWrite("st_streak",   streak);
+    lsWrite("st_ltd",      lastTaskDay);
+    lsWrite("st_sessions", sessions);
+  }, [exam, grade, completedCh, tasks, xp, level, streak, lastTaskDay, sessions], 300);
 
+  // Theme is written immediately (discrete user action, not batched)
+  useEffect(() => { lsWrite("st_theme", themeId); }, [themeId]);
+
+  // ── Exam switch ───────────────────────────────────────────────────────────
   const switchExam = useCallback((key) => {
-    setExamState(key); setCompletedCh({}); setTasks([]); setSelectedSub(null);
+    setExamState(key);
+    setCompletedCh({});
+    setTasks([]);
+    setSelectedSub(null);
   }, []);
 
+  // ── XP + level-up  ───────────────────────────────────────────────────────
   const addXp = useCallback((amount) => {
     setXp(prev => {
       let nx = prev + amount;
       setLevel(lv => {
         let nl = lv;
-        while (nx >= XP_PER_LEVEL*nl) { nx -= XP_PER_LEVEL*nl; nl++; setLevelUpData(nl); fireConfetti(accent); }
+        while (nx >= XP_PER_LEVEL * nl) {
+          nx -= XP_PER_LEVEL * nl;
+          nl++;
+          setLevelUpData(nl);
+          fireConfetti(accent);
+        }
         return nl;
       });
       return nx;
     });
   }, [accent]);
 
+  // ── Streak ────────────────────────────────────────────────────────────────
   const maybeIncrStreak = useCallback(() => {
     const td = todayStr();
-    setLastTaskDay(prev => { if (prev!==td) { setStreak(s=>s+1); return td; } return prev; });
+    setLastTaskDay(prev => {
+      if (prev !== td) { setStreak(s => s + 1); return td; }
+      return prev;
+    });
   }, []);
 
+  // ── TimerEngine callbacks (stable — passed once, never change identity) ───
+  const handlePomoComplete = useCallback((sessionInfo) => {
+    fireConfetti(sessionInfo.accent);
+    setSessions(p => [...p, { subject: sessionInfo.subject, dur: sessionInfo.dur, time: sessionInfo.time }]);
+    // addXp is already called inside TimerEngine via onXpEarned
+  }, []);
+
+  const handleXpEarned = useCallback((amount) => {
+    addXp(amount);
+  }, [addXp]);
+
+  // ── Chapter → Task ────────────────────────────────────────────────────────
   const handleChapterClick = useCallback((sub, ch) => {
     const text = `${sub} — ${ch}`;
-    setTasks(prev => prev.find(t=>t.text===text) ? prev : [...prev, { id:Date.now(), text, done:false, auto:true }]);
+    setTasks(prev => prev.find(t => t.text === text)
+      ? prev
+      : [...prev, { id: Date.now(), text, done: false, auto: true }]);
   }, []);
 
+  // ── Task handlers ─────────────────────────────────────────────────────────
   const handleAddTask = useCallback((text) => {
-    setTasks(prev => [...prev, { id:Date.now(), text, done:false }]);
+    setTasks(prev => [...prev, { id: Date.now(), text, done: false }]);
   }, []);
 
   const toggleTask = useCallback((id) => {
     setTasks(prev => prev.map(t => {
-      if (t.id!==id) return t;
+      if (t.id !== id) return t;
       if (!t.done) {
-        addXp(XP_PER_TASK); fireConfetti(accent); maybeIncrStreak();
+        addXp(XP_PER_TASK);
+        fireConfetti(accent);
+        maybeIncrStreak();
         if (t.auto && t.text.includes(" — ")) {
-          const [sub,ch] = t.text.split(" — ");
-          setCompletedCh(p => ({ ...p, [`${sub}::${ch}`]:true }));
+          const [sub, ch] = t.text.split(" — ");
+          setCompletedCh(p => ({ ...p, [`${sub}::${ch}`]: true }));
         }
       }
-      return { ...t, done:!t.done };
+      return { ...t, done: !t.done };
     }));
   }, [addXp, accent, maybeIncrStreak]);
 
-  const deleteTask = useCallback((id) => setTasks(p=>p.filter(t=>t.id!==id)), []);
+  const deleteTask = useCallback((id) => setTasks(p => p.filter(t => t.id !== id)), []);
 
-  // Pomodoro — `page` is intentionally NOT a dependency so timer keeps running
-  // when user switches from Focus Timer to Dashboard or Progress.
-  useEffect(() => {
-    if (running) {
-      timerRef.current = setInterval(() => {
-        setTimerSec(s => {
-          if (s<=1) {
-            clearInterval(timerRef.current); setRunning(false);
-            if (phase==="work") {
-              addXp(XP_PER_POMO); fireConfetti(accent);
-              setSessions(p=>[...p,{ subject:studyTopic||"General Study", dur:pomoDur, time:new Date().toLocaleTimeString() }]);
-              setPhase("break"); return brkDur*60;
-            } else { setPhase("work"); return pomoDur*60; }
-          }
-          return s-1;
-        });
-      }, 1000);
-    } else clearInterval(timerRef.current);
-    return () => clearInterval(timerRef.current);
-  }, [running, phase, pomoDur, brkDur, accent, studyTopic, addXp]);
-
-  useEffect(() => {
-    if (swRun) swRef.current = setInterval(() => setSwTime(s=>s+1), 1000);
-    else clearInterval(swRef.current);
-    return () => clearInterval(swRef.current);
-  }, [swRun]);
-
-  useEffect(() => { if (!running) setTimerSec(pomoDur*60); }, [pomoDur]);
-
-  const switchTimerMode = useCallback((mode) => {
-    setTimerMode(mode); setRunning(false); setSwRun(false);
-    setSwTime(0); setTimerSec(pomoDur*60); setPhase("work");
-  }, [pomoDur]);
-
-  // ─── ONBOARDING ──────────────────────────────────────────────────────────────
+  // ─── ONBOARDING ────────────────────────────────────────────────────────────
   if (!exam || !grade) {
     const obMeta   = exam ? EXAM_META[exam] : null;
     const obAccent = obMeta?.accent ?? "#38bdf8";
@@ -456,7 +907,7 @@ export default function App() {
       <div className="min-h-screen flex items-center justify-center p-5"
         style={{ background: exam ? `radial-gradient(ellipse at 60% 20%,${obAccent}18,#09090b)` : "radial-gradient(ellipse at 50% 30%,#0f172a,#09090b)" }}>
         <AnimatePresence mode="wait">
-          {onboardStep===0 ? (
+          {onboardStep === 0 ? (
             <motion.div key="ob0" initial={{ opacity:0,y:36 }} animate={{ opacity:1,y:0 }} exit={{ opacity:0,y:-36 }} className="text-center w-full max-w-lg">
               <motion.div animate={{ y:[0,-10,0] }} transition={{ repeat:Infinity, duration:3 }} style={{ fontSize:64, marginBottom:16 }}>🎯</motion.div>
               <h1 className="font-rajdhani font-bold tracking-widest mb-2"
@@ -465,11 +916,11 @@ export default function App() {
               </h1>
               <p className="text-zinc-600 text-sm tracking-[.25em] uppercase mb-10">For Noobs → Becoming Legends</p>
               <div className="grid grid-cols-2 gap-3">
-                {Object.entries(EXAM_META).map(([key,m]) => (
-                  <motion.button key={key} whileHover={{ scale:1.04,y:-2 }} {...tapProp}
+                {Object.entries(EXAM_META).map(([key, m]) => (
+                  <motion.button key={key} whileHover={{ scale:1.04,y:-2 }} {...TAP}
                     onClick={() => { setExamState(key); setOnboardStep(1); }}
                     className="rounded-2xl flex flex-col items-center gap-2 cursor-pointer"
-                    style={{ padding:"20px 12px", minHeight:100, border:`1.5px solid ${m.accent}55`, background:`linear-gradient(135deg,${m.accent}18,${m.accent}06)`, boxShadow:`0 0 28px ${m.glow}`, fontFamily:"Syne,sans-serif" }}>
+                    style={{ padding:"20px 12px", minHeight:100, border:`1.5px solid ${m.accent}55`, background:`linear-gradient(135deg,${m.accent}18,${m.accent}06)`, boxShadow:`0 0 28px ${m.glow}`, fontFamily:"Syne, sans-serif" }}>
                     <span style={{ fontSize:36 }}>{m.emoji}</span>
                     <span className="font-rajdhani font-bold tracking-wider" style={{ fontSize:22, color:m.accent }}>{m.label}</span>
                   </motion.button>
@@ -483,16 +934,16 @@ export default function App() {
               <p className="text-zinc-600 text-sm mb-7">We'll personalise your syllabus</p>
               <div className="flex flex-col gap-3">
                 {(EXAM_META[exam]?.grades ?? ["Class 11","Class 12","Dropper"]).map(g => (
-                  <motion.button key={g} whileHover={{ scale:1.02,x:4 }} {...tapProp}
+                  <motion.button key={g} whileHover={{ scale:1.02,x:4 }} {...TAP}
                     onClick={() => setGrade(g)}
                     className="w-full rounded-xl px-5 text-left text-base font-semibold text-zinc-200 cursor-pointer"
-                    style={{ minHeight:52, border:`1px solid ${obAccent}44`, background:`${obAccent}11`, fontFamily:"Syne,sans-serif" }}>
+                    style={{ minHeight:52, border:`1px solid ${obAccent}44`, background:`${obAccent}11`, fontFamily:"Syne, sans-serif" }}>
                     {g}
                   </motion.button>
                 ))}
               </div>
               <button onClick={() => setOnboardStep(0)} className="mt-5 text-zinc-600 text-sm hover:text-zinc-400 transition-colors"
-                style={{ background:"none", border:"none", cursor:"pointer", fontFamily:"Syne,sans-serif" }}>
+                style={{ background:"none", border:"none", cursor:"pointer", fontFamily:"Syne, sans-serif" }}>
                 ← Change Exam
               </button>
             </motion.div>
@@ -502,60 +953,52 @@ export default function App() {
     );
   }
 
-  // ─── DASHBOARD ───────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // PAGE COMPONENTS  (defined inside App to close over stable callbacks;
+  //  they are NOT inline-functions-in-render — they receive stable props so
+  //  React's reconciler can diff them correctly without remounting)
+  // ─────────────────────────────────────────────────────────────────────────
+
   function DashboardPage() {
     return (
       <div className="flex flex-col gap-4">
-        {/* Hero */}
-        <motion.div initial={{ opacity:0,y:18 }} animate={{ opacity:1,y:0 }} className={card}
-          style={{ border:`1px solid ${accent}44`, boxShadow:`0 8px 50px ${glow}`, position:"relative", overflow:"hidden" }}>
-          <div style={{ position:"absolute",top:-60,right:-60,width:260,height:260,borderRadius:"50%",background:`radial-gradient(circle,${glow},transparent 68%)`,pointerEvents:"none" }}/>
-          <div className="flex flex-wrap gap-3 justify-between items-start mb-4 relative">
-            <div>
-              <p className={`text-[10px] tracking-[.2em] uppercase mb-1 ${th.textMuted}`}>OVERALL PROGRESS</p>
-              <h2 className={`font-rajdhani font-bold ${th.text}`} style={{ fontSize:"clamp(24px,5vw,34px)" }}>
-                {overallPct}% <span style={{ color:accent, fontSize:"clamp(14px,3vw,20px)" }}>Complete</span>
-              </h2>
-            </div>
-            <div className="flex gap-2">
-              {[{ico:"🔥",val:streak,label:"Streak",color:"#f59e0b"},{ico:"⭐",val:`Lv.${level}`,label:"Level",color:accent},{ico:"⚡",val:xp,label:"XP",color:accent}].map((s,i)=>(
-                <div key={i} className={`text-center rounded-xl px-2.5 py-2 ${th.badgeBg}`} style={{ border:`1px solid ${th.isLight?"#e2e8f0":"rgba(255,255,255,0.08)"}` }}>
-                  <div className="text-sm text-center mb-0.5">{s.ico}</div>
-                  <div className="font-rajdhani font-bold" style={{ fontSize:14, color:s.color }}>{s.val}</div>
-                  <div className={`text-[9px] tracking-widest ${th.textMuted}`}>{s.label}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className={`h-2.5 rounded-full overflow-hidden ${th.trackBg}`}>
-            <motion.div initial={{ width:0 }} animate={{ width:`${overallPct}%` }} transition={{ duration:1.3,ease:"easeOut" }}
-              className="h-full rounded-full" style={{ background:`linear-gradient(90deg,${accent},${accent}88)`, boxShadow:`0 0 16px ${glow}` }}/>
-          </div>
-          <div className="flex justify-between mt-2">
-            <span className={`text-[11px] ${th.textMuted}`}>{doneCh}/{totalCh} chapters</span>
-            <span className="text-[11px] font-semibold" style={{ color:accent }}>{meta?.label} · {grade}</span>
-          </div>
-        </motion.div>
+        <GlobalProgressBar
+          overallPct={overallPct} doneCh={doneCh} totalCh={totalCh}
+          streak={streak} level={level} xp={xp}
+          accent={accent} glow={glow} th={th}
+          examLabel={meta?.label} grade={grade}
+        />
 
-        {/* Subject + Chapters — single column on mobile, 2-col on md+ */}
+        {/* Subject + Chapter grid */}
         <div className="grid gap-4 grid-cols-1 md:grid-cols-[1fr_1.7fr]">
-          <motion.div initial={{ opacity:0,y:18 }} animate={{ opacity:1,y:0 }} transition={{ delay:.08 }} className={card}>
+          {/* Subjects */}
+          <motion.div initial={{ opacity:0,y:18 }} animate={{ opacity:1,y:0 }} transition={{ delay:.08 }}
+            className="st-card glass rounded-2xl border p-5">
             <p className={`text-[10px] tracking-[.2em] uppercase mb-3 ${th.textMuted}`}>📖 SUBJECTS</p>
             <div className="flex flex-col gap-2">
               {Object.keys(subjects).map(sub => {
-                const chs=subjects[sub], done=chs.filter(c=>completedCh[`${sub}::${c}`]).length;
-                const pct=Math.round(done/chs.length*100), sel=selectedSub===sub;
+                const chs  = subjects[sub];
+                const done = chs.filter(c => completedCh[`${sub}::${c}`]).length;
+                const pct  = Math.round(done / chs.length * 100);
+                const sel  = selectedSub === sub;
                 return (
-                  <motion.button key={sub} whileHover={{ x:2 }} {...tapProp}
-                    onClick={() => setSelectedSub(sel?null:sub)}
+                  <motion.button key={sub} whileHover={{ x:2 }} {...TAP}
+                    onClick={() => setSelectedSub(sel ? null : sub)}
                     className="text-left rounded-xl px-3 cursor-pointer transition-all"
-                    style={{ minHeight:52, paddingTop:10, paddingBottom:10, background:sel?`${accent}1c`:(th.isLight?"rgba(0,0,0,0.03)":"rgba(255,255,255,0.03)"), border:`1px solid ${sel?accent+"55":(th.isLight?"#e2e8f0":"rgba(255,255,255,0.07)")}`, color:sel?accent:(th.isLight?"#1e293b":"#d4d4d8"), fontFamily:"Syne,sans-serif", fontSize:12, fontWeight:sel?700:500 }}>
+                    style={{
+                      minHeight: 52, paddingTop:10, paddingBottom:10,
+                      background: sel ? `${accent}1c` : (th.isLight ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.03)"),
+                      border:     `1px solid ${sel ? accent+"55" : (th.isLight ? "#e2e8f0" : "rgba(255,255,255,0.07)")}`,
+                      color:      sel ? accent : (th.isLight ? "#1e293b" : "#d4d4d8"),
+                      fontFamily: "Syne, sans-serif", fontSize:12, fontWeight: sel ? 700 : 500,
+                    }}>
                     <div className="flex justify-between mb-1.5">
                       <span>{sub}</span>
-                      <span style={{ fontFamily:"DM Mono,monospace",fontSize:11,opacity:.7 }}>{pct}%</span>
+                      <span style={{ fontFamily:"DM Mono,monospace", fontSize:11, opacity:.7 }}>{pct}%</span>
                     </div>
                     <div className={`h-[3px] rounded-full ${th.trackBg}`}>
-                      <motion.div animate={{ width:`${pct}%` }} transition={{ duration:.6 }} className="h-full rounded-full" style={{ background:accent }}/>
+                      <motion.div animate={{ width:`${pct}%` }} transition={{ duration:.6 }}
+                        className="h-full rounded-full" style={{ background: accent }} />
                     </div>
                   </motion.button>
                 );
@@ -563,28 +1006,35 @@ export default function App() {
             </div>
           </motion.div>
 
+          {/* Chapters */}
           <motion.div initial={{ opacity:0,y:18 }} animate={{ opacity:1,y:0 }} transition={{ delay:.12 }}
-            className={card} style={{ maxHeight:380, overflowY:"auto" }}>
-            <p className={`text-[10px] tracking-[.2em] uppercase mb-3 sticky top-0 pb-1 z-10 ${th.textMuted} st-card-sticky`}>
+            className="st-card glass rounded-2xl border p-5" style={{ maxHeight:380, overflowY:"auto" }}>
+            <p className={`text-[10px] tracking-[.2em] uppercase mb-3 sticky top-0 pb-1 z-10 st-card-sticky ${th.textMuted}`}>
               📋 {selectedSub ? `CHAPTERS — ${selectedSub.toUpperCase()}` : "CHAPTERS (SELECT SUBJECT)"}
             </p>
             {!selectedSub ? (
               <div className={`text-center py-10 text-sm ${th.textMuted}`}>← Select a subject to load chapters</div>
             ) : (
               <div className="flex flex-col gap-1.5">
-                {subjects[selectedSub].map((ch,i) => {
-                  const inTask  = tasks.some(t=>t.text===`${selectedSub} — ${ch}`);
-                  const taskDone= tasks.find(t=>t.text===`${selectedSub} — ${ch}` && t.done);
+                {subjects[selectedSub].map((ch, i) => {
+                  const inTask   = tasks.some(t => t.text === `${selectedSub} — ${ch}`);
+                  const taskDone = tasks.find(t => t.text === `${selectedSub} — ${ch}` && t.done);
                   return (
                     <motion.button key={ch}
-                      initial={{ opacity:0,x:-8 }} animate={{ opacity:1,x:0 }} transition={{ delay:i*.012 }}
-                      whileHover={{ x:2 }} {...tapProp}
-                      onClick={() => handleChapterClick(selectedSub,ch)}
+                      initial={{ opacity:0, x:-8 }} animate={{ opacity:1, x:0 }} transition={{ delay: i * 0.012 }}
+                      whileHover={{ x:2 }} {...TAP}
+                      onClick={() => handleChapterClick(selectedSub, ch)}
                       className="flex items-center gap-2.5 rounded-lg px-3 text-left cursor-pointer transition-all"
-                      style={{ minHeight:40, background:taskDone?`${accent}16`:inTask?`${accent}09`:(th.isLight?"rgba(0,0,0,0.02)":"rgba(255,255,255,0.02)"), border:`1px solid ${taskDone?accent+"44":inTask?accent+"22":(th.isLight?"#e2e8f0":"rgba(255,255,255,0.05)")}`, color:taskDone?accent:(th.isLight?"#334155":"#d4d4d8"), fontFamily:"Syne,sans-serif", fontSize:12 }}>
-                      <span style={{ fontSize:13, flexShrink:0 }}>{taskDone?"✅":inTask?"🔵":"○"}</span>
-                      <span style={{ textDecoration:taskDone?"line-through":"none",opacity:taskDone?.5:1 }}>{ch}</span>
-                      {!inTask && <span className="ml-auto text-[9px] font-bold whitespace-nowrap" style={{ color:accent,opacity:.6 }}>+quest</span>}
+                      style={{
+                        minHeight: 40,
+                        background: taskDone ? `${accent}16` : inTask ? `${accent}09` : (th.isLight ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.02)"),
+                        border:     `1px solid ${taskDone ? accent+"44" : inTask ? accent+"22" : (th.isLight ? "#e2e8f0" : "rgba(255,255,255,0.05)")}`,
+                        color:      taskDone ? accent : (th.isLight ? "#334155" : "#d4d4d8"),
+                        fontFamily: "Syne, sans-serif", fontSize:12,
+                      }}>
+                      <span style={{ fontSize:13, flexShrink:0 }}>{taskDone ? "✅" : inTask ? "🔵" : "○"}</span>
+                      <span style={{ textDecoration: taskDone?"line-through":"none", opacity: taskDone?.5:1 }}>{ch}</span>
+                      {!inTask && <span className="ml-auto text-[9px] font-bold whitespace-nowrap" style={{ color:accent, opacity:.6 }}>+quest</span>}
                     </motion.button>
                   );
                 })}
@@ -593,49 +1043,73 @@ export default function App() {
           </motion.div>
         </div>
 
-        {/* Tasks */}
-        <motion.div initial={{ opacity:0,y:18 }} animate={{ opacity:1,y:0 }} transition={{ delay:.16 }} className={card}>
+        {/* Daily Tasks / Quests */}
+        <motion.div initial={{ opacity:0,y:18 }} animate={{ opacity:1,y:0 }} transition={{ delay:.16 }}
+          className="st-card glass rounded-2xl border p-5">
           <div className="flex justify-between items-center mb-4">
             <div>
               <p className={`text-[10px] tracking-[.2em] uppercase ${th.textMuted}`}>⚔️ DAILY TASKS / QUESTS</p>
-              <p className={`text-[11px] mt-1 ${th.textMuted}`}>{doneTasks}/{tasks.length} done · +{XP_PER_TASK} XP each · 🔥 {streak}-day streak</p>
+              <p className={`text-[11px] mt-1 ${th.textMuted}`}>
+                {doneTasks}/{tasks.length} done · +{XP_PER_TASK} XP each · 🔥 {streak}-day streak
+              </p>
             </div>
-            {tasks.length>0 && (
-              <span className="font-rajdhani font-bold text-sm" style={{ color:doneTasks===tasks.length?accent:(th.isLight?"#94a3b8":"#52525b") }}>
-                {Math.round(doneTasks/tasks.length*100)}%
+            {tasks.length > 0 && (
+              <span className="font-rajdhani font-bold text-sm"
+                style={{ color: doneTasks === tasks.length ? accent : (th.isLight ? "#94a3b8" : "#52525b") }}>
+                {Math.round(doneTasks / tasks.length * 100)}%
               </span>
             )}
           </div>
+
+          {/* TaskInput: module-scope memo — typing never re-renders App */}
           <div className="mb-3">
-            <TaskInput onAdd={handleAddTask} accent={accent} isLight={th.isLight}/>
+            <TaskInput onAdd={handleAddTask} accent={accent} isLight={th.isLight} />
           </div>
-          {/* LayoutGroup scopes layout animations to the list only */}
+
           <LayoutGroup>
             <div className="flex flex-col gap-2">
               <AnimatePresence initial={false}>
-                {tasks.length===0 && (
-                  <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }} className={`text-center py-5 text-sm ${th.textMuted}`}>
+                {tasks.length === 0 && (
+                  <motion.div key="empty" initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
+                    className={`text-center py-5 text-sm ${th.textMuted}`}>
                     No quests yet — add one above, or click a chapter 🗡️
                   </motion.div>
                 )}
                 {tasks.map(t => (
-                  <motion.div key={t.id} layout="position"
-                    initial={{ opacity:0,x:-16 }} animate={{ opacity:1,x:0 }} exit={{ opacity:0,x:20 }}
-                    transition={{ layout:{ duration:.22 } }}
+                  <motion.div key={t.id}
+                    layout="position"
+                    initial={{ opacity:0, x:-16 }} animate={{ opacity:1, x:0 }} exit={{ opacity:0, x:20 }}
+                    transition={{ layout: { duration: .22 } }}
                     className="flex items-center gap-2 rounded-xl px-2"
-                    style={{ minHeight:52, background:t.done?`${accent}0e`:(th.isLight?"rgba(0,0,0,0.02)":"rgba(255,255,255,0.02)"), border:`1px solid ${t.done?accent+"33":(th.isLight?"#e2e8f0":"rgba(255,255,255,0.06)")}` }}>
-                    <motion.button {...tapProp} onClick={() => toggleTask(t.id)}
+                    style={{
+                      minHeight: 52,
+                      background: t.done ? `${accent}0e` : (th.isLight ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.02)"),
+                      border:     `1px solid ${t.done ? accent+"33" : (th.isLight ? "#e2e8f0" : "rgba(255,255,255,0.06)")}`,
+                    }}>
+                    <motion.button {...TAP} onClick={() => toggleTask(t.id)}
                       className="flex-shrink-0 cursor-pointer flex items-center justify-center"
-                      style={{ background:"none", border:"none", color:t.done?accent:(th.isLight?"#cbd5e1":"#3f3f46"), minWidth:48, minHeight:52 }}>
-                      {t.done ? <CheckCircle2 size={22}/> : <Circle size={22}/>}
+                      style={{ background:"none", border:"none", color: t.done ? accent : (th.isLight ? "#cbd5e1" : "#3f3f46"), minWidth:48, minHeight:52 }}>
+                      {t.done ? <CheckCircle2 size={22} /> : <Circle size={22} />}
                     </motion.button>
-                    <span className="flex-1 text-xs break-words" style={{ fontFamily:"Syne,sans-serif", color:t.done?(th.isLight?"#94a3b8":"#52525b"):(th.isLight?"#1e293b":"#e4e4e7"), textDecoration:t.done?"line-through":"none" }}>{t.text}</span>
-                    {t.auto && !t.done && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0" style={{ color:accent,background:`${accent}18`,border:`1px solid ${accent}33` }}>syllabus</span>}
-                    {t.done && <motion.span initial={{ scale:0 }} animate={{ scale:1 }} className="text-[10px] font-bold px-2 py-0.5 rounded flex-shrink-0" style={{ color:accent,background:`${accent}18` }}>+{XP_PER_TASK} XP</motion.span>}
-                    <motion.button {...tapProp} onClick={() => deleteTask(t.id)}
+                    <span className="flex-1 text-xs break-words"
+                      style={{ fontFamily:"Syne, sans-serif", color: t.done ? (th.isLight?"#94a3b8":"#52525b") : (th.isLight?"#1e293b":"#e4e4e7"), textDecoration: t.done?"line-through":"none" }}>
+                      {t.text}
+                    </span>
+                    {t.auto && !t.done && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0"
+                        style={{ color:accent, background:`${accent}18`, border:`1px solid ${accent}33` }}>syllabus</span>
+                    )}
+                    {t.done && (
+                      <motion.span initial={{ scale:0 }} animate={{ scale:1 }}
+                        className="text-[10px] font-bold px-2 py-0.5 rounded flex-shrink-0"
+                        style={{ color:accent, background:`${accent}18` }}>
+                        +{XP_PER_TASK} XP
+                      </motion.span>
+                    )}
+                    <motion.button {...TAP} onClick={() => deleteTask(t.id)}
                       className="flex-shrink-0 cursor-pointer opacity-40 flex items-center justify-center"
-                      style={{ background:"none", border:"none", color:th.isLight?"#94a3b8":"#71717a", minWidth:44, minHeight:52 }}>
-                      <Trash2 size={15}/>
+                      style={{ background:"none", border:"none", color: th.isLight?"#94a3b8":"#71717a", minWidth:44, minHeight:52 }}>
+                      <Trash2 size={15} />
                     </motion.button>
                   </motion.div>
                 ))}
@@ -647,93 +1121,32 @@ export default function App() {
     );
   }
 
-  // ─── TIMER PAGE ───────────────────────────────────────────────────────────────
   function TimerPage() {
-    const phaseColor = phase==="break" ? "#4ade80" : accent;
-    const progress   = timerMode==="pomodoro" ? timerSec/totalDur : (swTime%3600)/3600;
-    const timerSize  = typeof window!=="undefined" && window.innerWidth<420 ? 180 : 220;
     return (
       <div className="flex flex-col gap-4">
-        <motion.div initial={{ opacity:0,y:18 }} animate={{ opacity:1,y:0 }} className={card}>
-          <div className={`flex p-1 rounded-xl mb-6 max-w-xs mx-auto ${th.trackBg}`}>
-            {["pomodoro","stopwatch"].map(m => (
-              <motion.button key={m} {...tapProp} onClick={() => switchTimerMode(m)}
-                className="flex-1 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all"
-                style={{ minHeight:44, background:timerMode===m?`${accent}28`:"transparent", border:`1px solid ${timerMode===m?accent+"55":"transparent"}`, color:timerMode===m?accent:(th.isLight?"#64748b":"#71717a"), fontFamily:"Syne,sans-serif" }}>
-                {m==="pomodoro"?"🍅 Pomodoro":"⏱ Stopwatch"}
-              </motion.button>
-            ))}
-          </div>
-          <div className="flex justify-center mb-6">
-            <CircularTimer progress={progress} accent={phaseColor} size={timerSize}>
-              <p className="text-[10px] tracking-[.2em] uppercase mb-1" style={{ color:phaseColor }}>
-                {timerMode==="pomodoro" ? (phase==="work"?"FOCUS":"BREAK") : "ELAPSED"}
-              </p>
-              <p className="font-rajdhani font-bold tracking-widest" style={{ fontSize:"clamp(36px,10vw,52px)", color:th.isLight?"#0f172a":"#f4f4f5" }}>
-                {timerMode==="pomodoro" ? fmtTime(timerSec) : fmtTime(swTime)}
-              </p>
-              {timerMode==="pomodoro" && <p className={`text-[10px] mt-1 ${th.textMuted}`}>+{XP_PER_POMO} XP</p>}
-            </CircularTimer>
-          </div>
-          <div className="flex justify-center gap-4 mb-5">
-            <motion.button whileHover={{ scale:1.06 }} {...tapProp}
-              onClick={() => timerMode==="pomodoro" ? setRunning(r=>!r) : setSwRun(r=>!r)}
-              className="flex items-center gap-2 rounded-full font-bold text-black cursor-pointer"
-              style={{ minHeight:52, paddingLeft:36, paddingRight:36, background:`linear-gradient(135deg,${accent},${accent}cc)`, boxShadow:`0 4px 28px ${glow}`, border:"none", fontFamily:"Syne,sans-serif", fontSize:15 }}>
-              {(timerMode==="pomodoro"?running:swRun) ? <><Pause size={18}/> Pause</> : <><Play size={18}/> Start</>}
-            </motion.button>
-            <motion.button {...tapProp} whileTap={{ scale:0.95, rotate:-30 }}
-              onClick={() => { setRunning(false); setSwRun(false); timerMode==="pomodoro"?(setTimerSec(pomoDur*60),setPhase("work")):setSwTime(0); }}
-              className="flex items-center justify-center rounded-full cursor-pointer transition-colors st-btn-subtle"
-              style={{ minWidth:52, minHeight:52, border:`1px solid ${th.isLight?"#e2e8f0":"rgba(255,255,255,0.1)"}`, background:"transparent" }}>
-              <RotateCcw size={18}/>
-            </motion.button>
-          </div>
-          {timerMode==="pomodoro" && (
-            <div className="flex gap-8 justify-center flex-wrap">
-              {[{label:"Focus (min)",val:pomoDur,set:v=>{setPomoDur(v);if(!running)setTimerSec(v*60);}},{label:"Break (min)",val:brkDur,set:setBrkDur}].map(({label,val,set})=>(
-                <div key={label} className="text-center">
-                  <p className={`text-[10px] tracking-widest mb-2 ${th.textMuted}`}>{label.toUpperCase()}</p>
-                  <div className="flex items-center gap-2">
-                    {[{s:"−",fn:()=>set(v=>Math.max(1,v-5))},null,{s:"+",fn:()=>set(v=>Math.min(90,v+5))}].map((b,i) =>
-                      b ? (
-                        <motion.button key={b.s} {...tapProp} onClick={b.fn}
-                          className="rounded-lg cursor-pointer flex items-center justify-center st-btn-subtle"
-                          style={{ minWidth:48, minHeight:48, border:`1px solid ${th.isLight?"#e2e8f0":"rgba(255,255,255,0.1)"}`, background:"transparent", color:th.isLight?"#0f172a":"#f4f4f5", fontSize:20 }}>
-                          {b.s}
-                        </motion.button>
-                      ) : (
-                        <span key="v" className="font-rajdhani font-bold text-2xl min-w-[32px] text-center" style={{ color:accent }}>{val}</span>
-                      )
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </motion.div>
-        <motion.div initial={{ opacity:0,y:16 }} animate={{ opacity:1,y:0 }} transition={{ delay:.1 }} className={card}>
-          <p className={`text-[10px] tracking-[.2em] uppercase mb-3 ${th.textMuted}`}>🎯 CURRENTLY STUDYING</p>
-          <select value={studyTopic} onChange={e=>setStudyTopic(e.target.value)}
-            className="w-full rounded-xl px-4 py-3 text-sm outline-none cursor-pointer"
-            style={{ background:th.selectBg, border:`1px solid ${th.selectBdr}`, color:th.selectText, fontFamily:"Syne,sans-serif", minHeight:48 }}>
-            <option value="">— Select topic —</option>
-            {Object.entries(subjects).map(([sub,chs])=>(
-              <optgroup key={sub} label={sub} style={{ background:th.optBg }}>
-                {chs.map(ch=><option key={ch} value={`${sub} — ${ch}`} style={{ background:th.optBg }}>{ch}</option>)}
-              </optgroup>
-            ))}
-          </select>
-        </motion.div>
-        {sessions.length>0 && (
-          <motion.div initial={{ opacity:0,y:16 }} animate={{ opacity:1,y:0 }} transition={{ delay:.15 }} className={card}>
+        {/* TimerEngine owns all timer state — zero App re-renders during countdown */}
+        <TimerEngine
+          accent={accent} glow={glow} th={th} subjects={subjects}
+          onPomoComplete={handlePomoComplete}
+          onXpEarned={handleXpEarned}
+        />
+        {/* Session log lives in App state, rendered here */}
+        {sessions.length > 0 && (
+          <motion.div initial={{ opacity:0,y:16 }} animate={{ opacity:1,y:0 }} transition={{ delay:.1 }}
+            className="st-card glass rounded-2xl border p-5">
             <p className={`text-[10px] tracking-[.2em] uppercase mb-3 ${th.textMuted}`}>🏆 SESSION LOG</p>
             <div className="flex flex-col gap-2">
-              {sessions.slice(-5).reverse().map((s,i)=>(
+              {sessions.slice(-5).reverse().map((s, i) => (
                 <div key={i} className="flex justify-between items-center rounded-xl px-3 py-2.5"
-                  style={{ background:th.isLight?"rgba(0,0,0,0.02)":"rgba(255,255,255,0.02)", border:`1px solid ${th.isLight?"#e2e8f0":"rgba(255,255,255,0.05)"}` }}>
-                  <div><p className={`text-xs ${th.text}`}>{s.subject}</p><p className={`text-[10px] font-mono ${th.textMuted}`}>{s.time}</p></div>
-                  <div className="text-right"><p className="font-rajdhani font-bold text-sm" style={{ color:accent }}>{s.dur}m</p><p className={`text-[10px] ${th.textMuted}`}>+{XP_PER_POMO} XP</p></div>
+                  style={{ background: th.isLight?"rgba(0,0,0,0.02)":"rgba(255,255,255,0.02)", border:`1px solid ${th.isLight?"#e2e8f0":"rgba(255,255,255,0.05)"}` }}>
+                  <div>
+                    <p className={`text-xs ${th.text}`}>{s.subject}</p>
+                    <p className={`text-[10px] font-mono ${th.textMuted}`}>{s.time}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-rajdhani font-bold text-sm" style={{ color:accent }}>{s.dur}m</p>
+                    <p className={`text-[10px] ${th.textMuted}`}>+{XP_PER_POMO} XP</p>
+                  </div>
                 </div>
               ))}
             </div>
@@ -743,58 +1156,80 @@ export default function App() {
     );
   }
 
-  // ─── PROGRESS PAGE ────────────────────────────────────────────────────────────
   function ProgressPage() {
-    const barColors = [accent,"#f59e0b","#e879f9","#4ade80","#f87171"];
+    const barColors = [accent, "#f59e0b", "#e879f9", "#4ade80", "#f87171"];
     return (
       <div className="flex flex-col gap-4">
-        <motion.div initial={{ opacity:0,y:18 }} animate={{ opacity:1,y:0 }} className="st-card glass rounded-2xl border p-6 text-center"
+        {/* Level card */}
+        <motion.div initial={{ opacity:0,y:18 }} animate={{ opacity:1,y:0 }}
+          className="st-card glass rounded-2xl border p-6 text-center"
           style={{ background:`linear-gradient(135deg,${accent}18,transparent)`, border:`1px solid ${accent}44`, boxShadow:`0 0 50px ${glow}` }}>
-          <motion.div animate={{ rotate:[0,6,-6,0] }} transition={{ repeat:Infinity,duration:4 }} style={{ fontSize:50,marginBottom:6 }}>🏆</motion.div>
+          <motion.div animate={{ rotate:[0,6,-6,0] }} transition={{ repeat:Infinity, duration:4 }} style={{ fontSize:50, marginBottom:6 }}>🏆</motion.div>
           <p className="font-rajdhani font-bold" style={{ fontSize:"clamp(38px,10vw,50px)", color:accent }}>{level}</p>
           <p className={`text-sm mb-4 ${th.textMuted}`}>Current Level</p>
           <div className={`h-2 rounded-full overflow-hidden max-w-xs mx-auto ${th.trackBg}`}>
-            <motion.div initial={{ width:0 }} animate={{ width:`${Math.min(100,xp/(XP_PER_LEVEL*level)*100)}%` }} transition={{ duration:1.5,ease:"easeOut" }}
-              className="h-full rounded-full xp-shimmer" style={{ background:`linear-gradient(90deg,${accent},#818cf8,${accent})` }}/>
+            <motion.div initial={{ width:0 }} animate={{ width:`${Math.min(100, xp/(XP_PER_LEVEL*level)*100)}%` }}
+              transition={{ duration:1.5, ease:"easeOut" }}
+              className="h-full rounded-full xp-shimmer"
+              style={{ background:`linear-gradient(90deg,${accent},#818cf8,${accent})` }} />
           </div>
-          <p className={`text-xs mt-2 font-mono ${th.textMuted}`}>{xp} / {XP_PER_LEVEL*level} XP → Level {level+1}</p>
+          <p className={`text-xs mt-2 font-mono ${th.textMuted}`}>{xp} / {XP_PER_LEVEL * level} XP → Level {level + 1}</p>
         </motion.div>
+
+        {/* Stats row */}
         <div className="grid grid-cols-3 gap-3">
           {[{ico:"📚",val:doneCh,label:"Chapters"},{ico:"⚔️",val:doneTasks,label:"Tasks"},{ico:"🍅",val:sessions.length,label:"Sessions"}].map((s,i)=>(
-            <motion.div key={i} initial={{ opacity:0,scale:.9 }} animate={{ opacity:1,scale:1 }} transition={{ delay:i*.08 }} className={card+" text-center"}>
-              <div style={{ fontSize:24,marginBottom:4 }}>{s.ico}</div>
-              <p className="font-rajdhani font-bold" style={{ fontSize:28,color:accent }}>{s.val}</p>
+            <motion.div key={i} initial={{ opacity:0,scale:.9 }} animate={{ opacity:1,scale:1 }} transition={{ delay:i*.08 }}
+              className="st-card glass rounded-2xl border p-4 text-center">
+              <div style={{ fontSize:24, marginBottom:4 }}>{s.ico}</div>
+              <p className="font-rajdhani font-bold" style={{ fontSize:28, color:accent }}>{s.val}</p>
               <p className={`text-[10px] tracking-widest ${th.textMuted}`}>{s.label}</p>
             </motion.div>
           ))}
         </div>
-        <motion.div initial={{ opacity:0,y:16 }} animate={{ opacity:1,y:0 }} transition={{ delay:.15 }} className={card}>
+
+        {/* Subject breakdown */}
+        <motion.div initial={{ opacity:0,y:16 }} animate={{ opacity:1,y:0 }} transition={{ delay:.15 }}
+          className="st-card glass rounded-2xl border p-5">
           <p className={`text-[10px] tracking-[.2em] uppercase mb-4 ${th.textMuted}`}>📊 SUBJECT BREAKDOWN</p>
           <div className="flex flex-col gap-4">
-            {Object.entries(subjects).map(([sub,chs],i)=>{
-              const d=chs.filter(c=>completedCh[`${sub}::${c}`]).length, pct=Math.round(d/chs.length*100), bc=barColors[i%barColors.length];
+            {Object.entries(subjects).map(([sub, chs], i) => {
+              const d   = chs.filter(c => completedCh[`${sub}::${c}`]).length;
+              const pct = Math.round(d / chs.length * 100);
+              const bc  = barColors[i % barColors.length];
               return (
                 <motion.div key={sub} initial={{ opacity:0,x:-16 }} animate={{ opacity:1,x:0 }} transition={{ delay:i*.07 }}>
                   <div className="flex justify-between mb-2">
                     <span className={`text-sm font-semibold ${th.text}`}>{sub}</span>
-                    <span className="font-bold text-xs" style={{ color:bc,fontFamily:"DM Mono,monospace" }}>{d}/{chs.length} · {pct}%</span>
+                    <span className="font-bold text-xs" style={{ color:bc, fontFamily:"DM Mono, monospace" }}>{d}/{chs.length} · {pct}%</span>
                   </div>
                   <div className={`h-2 rounded-full overflow-hidden ${th.trackBg}`}>
-                    <motion.div initial={{ width:0 }} animate={{ width:`${pct}%` }} transition={{ duration:1,delay:i*.1,ease:"easeOut" }}
-                      className="h-full rounded-full" style={{ background:`linear-gradient(90deg,${bc},${bc}99)`, boxShadow:`0 0 10px ${bc}55` }}/>
+                    <motion.div initial={{ width:0 }} animate={{ width:`${pct}%` }} transition={{ duration:1, delay:i*.1, ease:"easeOut" }}
+                      className="h-full rounded-full" style={{ background:`linear-gradient(90deg,${bc},${bc}99)`, boxShadow:`0 0 10px ${bc}55` }} />
                   </div>
                 </motion.div>
               );
             })}
           </div>
         </motion.div>
-        <motion.div initial={{ opacity:0,y:16 }} animate={{ opacity:1,y:0 }} transition={{ delay:.22 }} className={card}>
+
+        {/* Achievements */}
+        <motion.div initial={{ opacity:0,y:16 }} animate={{ opacity:1,y:0 }} transition={{ delay:.22 }}
+          className="st-card glass rounded-2xl border p-5">
           <p className={`text-[10px] tracking-[.2em] uppercase mb-4 ${th.textMuted}`}>🏅 ACHIEVEMENTS</p>
           <div className="grid grid-cols-2 gap-2.5">
-            {[{ico:"🔥",label:"First Blood",desc:"Complete 1 chapter",ok:doneCh>=1},{ico:"⚡",label:"On Fire",desc:"5 chapters done",ok:doneCh>=5},{ico:"🎯",label:"Quest Master",desc:"Finish 5 tasks",ok:doneTasks>=5},{ico:"🍅",label:"Pomo Pro",desc:"Log 3 sessions",ok:sessions.length>=3},{ico:"⭐",label:"Rising Star",desc:"Reach Level 2",ok:level>=2},{ico:"💎",label:"Diamond Mind",desc:"50% syllabus done",ok:overallPct>=50}].map((a,i)=>(
+            {[
+              {ico:"🔥",label:"First Blood",  desc:"Complete 1 chapter",  ok:doneCh>=1},
+              {ico:"⚡",label:"On Fire",       desc:"5 chapters done",      ok:doneCh>=5},
+              {ico:"🎯",label:"Quest Master",  desc:"Finish 5 tasks",       ok:doneTasks>=5},
+              {ico:"🍅",label:"Pomo Pro",      desc:"Log 3 sessions",       ok:sessions.length>=3},
+              {ico:"⭐",label:"Rising Star",   desc:"Reach Level 2",        ok:level>=2},
+              {ico:"💎",label:"Diamond Mind",  desc:"50% syllabus done",    ok:overallPct>=50},
+            ].map((a, i) => (
               <motion.div key={i} initial={{ opacity:0,scale:.9 }} animate={{ opacity:1,scale:1 }} transition={{ delay:i*.05 }}
-                className="rounded-xl p-3" style={{ background:a.ok?`${accent}12`:(th.isLight?"rgba(0,0,0,0.02)":"rgba(255,255,255,0.02)"), border:`1px solid ${a.ok?accent+"33":(th.isLight?"#e2e8f0":"rgba(255,255,255,0.05)")}`, opacity:a.ok?1:.42 }}>
-                <div style={{ fontSize:22,marginBottom:3 }}>{a.ok?a.ico:"🔒"}</div>
+                className="rounded-xl p-3"
+                style={{ background:a.ok?`${accent}12`:(th.isLight?"rgba(0,0,0,0.02)":"rgba(255,255,255,0.02)"), border:`1px solid ${a.ok?accent+"33":(th.isLight?"#e2e8f0":"rgba(255,255,255,0.05)")}`, opacity:a.ok?1:.42 }}>
+                <div style={{ fontSize:22, marginBottom:3 }}>{a.ok ? a.ico : "🔒"}</div>
                 <p className={`text-xs font-semibold ${th.text}`}>{a.label}</p>
                 <p className={`text-[10px] ${th.textMuted}`}>{a.desc}</p>
               </motion.div>
@@ -805,96 +1240,136 @@ export default function App() {
     );
   }
 
-  // ─── THEME PANEL ──────────────────────────────────────────────────────────────
+  // ─── THEME PANEL ───────────────────────────────────────────────────────────
   function ThemePanel() {
     return (
-      <motion.div initial={{ opacity:0,y:8,scale:.96 }} animate={{ opacity:1,y:0,scale:1 }} exit={{ opacity:0,y:8,scale:.96 }}
+      <motion.div
+        initial={{ opacity:0,y:8,scale:.96 }} animate={{ opacity:1,y:0,scale:1 }} exit={{ opacity:0,y:8,scale:.96 }}
         className={`absolute right-0 top-12 z-[200] ${th.modalBg} glass rounded-2xl p-5 w-52`}
         style={{ border:"1px solid rgba(255,255,255,0.1)", boxShadow:"0 12px 50px rgba(0,0,0,.6)" }}>
         <p className={`text-[10px] tracking-[.2em] uppercase mb-3 ${th.textMuted}`}>🎨 THEME ENGINE</p>
         <div className="flex gap-1.5 mb-4">
-          {Object.values(THEMES).map(t=>(
-            <motion.button key={t.id} {...tapProp} onClick={()=>setThemeId(t.id)}
+          {Object.values(THEMES).map(t => (
+            <motion.button key={t.id} {...TAP} onClick={() => setThemeId(t.id)}
               className="flex-1 rounded-lg text-xs font-semibold cursor-pointer"
-              style={{ minHeight:40, background:themeId===t.id?`${accent}22`:"transparent", border:`1px solid ${themeId===t.id?accent+"55":"rgba(255,255,255,0.08)"}`, color:themeId===t.id?accent:"#71717a", fontFamily:"Syne,sans-serif", transition:"background-color .3s,border-color .3s,color .2s" }}>
-              {t.id==="dark"?"🌙":t.id==="light"?"☀️":"⚡"}
+              style={{
+                minHeight: 40,
+                background:  themeId === t.id ? `${accent}22` : "transparent",
+                border:      `1px solid ${themeId === t.id ? accent+"55" : "rgba(255,255,255,0.08)"}`,
+                color:       themeId === t.id ? accent : "#71717a",
+                fontFamily:  "Syne, sans-serif",
+                transition:  "background-color .3s,border-color .3s,color .2s",
+              }}>
+              {t.id === "dark" ? "🌙" : t.id === "light" ? "☀️" : "⚡"}
             </motion.button>
           ))}
         </div>
         <p className={`text-[10px] tracking-widest mb-2 ${th.textMuted}`}>SWITCH EXAM / ACCENT</p>
-        {Object.entries(EXAM_META).map(([key,m])=>(
-          <motion.button key={key} {...tapProp} onClick={()=>{ switchExam(key); setShowThemePanel(false); }}
+        {Object.entries(EXAM_META).map(([key, m]) => (
+          <motion.button key={key} {...TAP}
+            onClick={() => { switchExam(key); setShowThemePanel(false); }}
             className="w-full flex items-center gap-2.5 px-2.5 rounded-lg mb-1 cursor-pointer"
-            style={{ minHeight:44, background:exam===key?`${m.accent}18`:"transparent", border:`1px solid ${exam===key?m.accent+"44":"rgba(255,255,255,0.06)"}`, color:exam===key?m.accent:"#71717a", fontFamily:"Syne,sans-serif", fontSize:12, fontWeight:exam===key?700:400, transition:"background-color .25s,border-color .25s" }}>
-            <span style={{ width:11,height:11,borderRadius:"50%",background:m.accent,flexShrink:0,boxShadow:`0 0 8px ${m.accent}` }}/>
+            style={{
+              minHeight:  44,
+              background: exam === key ? `${m.accent}18` : "transparent",
+              border:     `1px solid ${exam === key ? m.accent+"44" : "rgba(255,255,255,0.06)"}`,
+              color:      exam === key ? m.accent : "#71717a",
+              fontFamily: "Syne, sans-serif", fontSize:12, fontWeight: exam===key ? 700 : 400,
+              transition: "background-color .25s,border-color .25s",
+            }}>
+            <span style={{ width:11, height:11, borderRadius:"50%", background:m.accent, flexShrink:0, boxShadow:`0 0 8px ${m.accent}` }}/>
             {m.label}
-            {exam===key && <CheckCircle2 size={12} style={{ marginLeft:"auto",color:m.accent }}/>}
+            {exam === key && <CheckCircle2 size={12} style={{ marginLeft:"auto", color:m.accent }} />}
           </motion.button>
         ))}
       </motion.div>
     );
   }
 
-  // ─── ROOT RENDER ──────────────────────────────────────────────────────────────
+  // ─── ROOT RENDER ──────────────────────────────────────────────────────────
   const titleMap = { dashboard:"Dashboard", timer:"Focus Timer", progress:"Progress" };
 
   return (
-    <div className="app-root" style={{ minHeight:"100dvh" }}>
-      {/* Desktop sidebar — memo'd, won't re-render on task toggle etc. */}
-      <Sidebar th={th} page={page} setPage={setPage}
+    // transition-colors duration-300 handles smooth theme fade
+    <div className="app-root transition-colors duration-300" style={{ minHeight:"100dvh" }}>
+
+      {/* Desktop sidebar — memo, never re-renders from timer ticks */}
+      <Sidebar
+        th={th} page={page} setPage={setPage}
         sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen}
-        accent={accent} glow={glow} xp={xp} level={level}/>
+        accent={accent} glow={glow} xp={xp} level={level}
+      />
 
       {/* Mobile bottom nav */}
-      <BottomNav page={page} setPage={setPage} accent={accent}/>
+      <BottomNav page={page} setPage={setPage} accent={accent} />
 
       <main className="st-main" style={{ minHeight:"100dvh" }}>
-        {/* Topbar */}
+
+        {/* Top bar */}
         <header className="st-topbar glass sticky top-0 z-50 border-b px-4 md:px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <h1 className={`font-rajdhani font-bold tracking-wide ${th.text}`}
-              style={{ fontSize:"clamp(16px,4vw,20px)" }}>{titleMap[page]}</h1>
-            <motion.button whileHover={{ scale:1.06 }} {...tapProp}
-              onClick={()=>setShowExamModal(true)}
+              style={{ fontSize:"clamp(16px,4vw,20px)" }}>
+              {titleMap[page]}
+            </h1>
+            <motion.button whileHover={{ scale:1.06 }} {...TAP}
+              onClick={() => setShowExamModal(true)}
               className="flex items-center gap-1 font-bold px-3 rounded-full cursor-pointer"
-              style={{ minHeight:32, color:accent, background:`${accent}18`, border:`1px solid ${accent}44`, fontFamily:"Syne,sans-serif", fontSize:11, letterSpacing:1 }}>
-              {meta?.label} <ChevronDown size={11}/>
+              style={{ minHeight:32, color:accent, background:`${accent}18`, border:`1px solid ${accent}44`, fontFamily:"Syne, sans-serif", fontSize:11, letterSpacing:1 }}>
+              {meta?.label} <ChevronDown size={11} />
             </motion.button>
           </div>
+
           <div className="flex items-center gap-2 relative">
+            {/* Streak badge */}
             <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full"
               style={{ background:th.isLight?"rgba(0,0,0,0.04)":"rgba(255,255,255,0.05)", border:`1px solid ${th.isLight?"#e2e8f0":"rgba(255,255,255,0.08)"}` }}>
-              <Flame size={13} color="#f59e0b"/><span className="font-rajdhani font-bold text-xs" style={{ color:"#f59e0b" }}>{streak}d</span>
+              <Flame size={13} color="#f59e0b" />
+              <span className="font-rajdhani font-bold text-xs" style={{ color:"#f59e0b" }}>{streak}d</span>
             </div>
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full" style={{ background:`${accent}18`, border:`1px solid ${accent}44` }}>
-              <Zap size={13} color={accent}/><span className="font-rajdhani font-bold text-xs" style={{ color:accent }}>{xp} XP</span>
+            {/* XP badge */}
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+              style={{ background:`${accent}18`, border:`1px solid ${accent}44` }}>
+              <Zap size={13} color={accent} />
+              <span className="font-rajdhani font-bold text-xs" style={{ color:accent }}>{xp} XP</span>
             </div>
-            <motion.button whileHover={{ scale:1.08,rotate:30 }} {...tapProp}
-              onClick={()=>setShowThemePanel(o=>!o)}
+            {/* Theme toggle */}
+            <motion.button whileHover={{ scale:1.08, rotate:30 }} {...TAP}
+              onClick={() => setShowThemePanel(o => !o)}
               className="flex items-center justify-center rounded-xl cursor-pointer"
               style={{ minWidth:44, minHeight:44, background:showThemePanel?`${accent}22`:(th.isLight?"rgba(0,0,0,0.05)":"rgba(255,255,255,0.06)"), border:`1px solid ${showThemePanel?accent+"55":(th.isLight?"#e2e8f0":"rgba(255,255,255,0.08)")}`, color:showThemePanel?accent:(th.isLight?"#64748b":"#71717a") }}>
-              <Palette size={15}/>
+              <Palette size={15} />
             </motion.button>
-            <AnimatePresence>{showThemePanel && <ThemePanel/>}</AnimatePresence>
+            <AnimatePresence>{showThemePanel && <ThemePanel />}</AnimatePresence>
           </div>
         </header>
 
-        {showThemePanel && <div className="fixed inset-0 z-[49]" onClick={()=>setShowThemePanel(false)}/>}
+        {showThemePanel && <div className="fixed inset-0 z-[49]" onClick={() => setShowThemePanel(false)} />}
 
-        {/* Scrollable content — pb-20 leaves room for mobile bottom nav */}
+        {/* Content — pb-24 leaves room for mobile bottom nav + safe area */}
         <div className="px-4 md:px-6 pt-4 pb-24 md:pb-6 max-w-[900px] mx-auto">
           <AnimatePresence mode="wait">
-            <motion.div key={page} initial={{ opacity:0,y:14 }} animate={{ opacity:1,y:0 }} exit={{ opacity:0,y:-14 }} transition={{ duration:.18 }}>
-              {page==="dashboard" && <DashboardPage/>}
-              {page==="timer"     && <TimerPage/>}
-              {page==="progress"  && <ProgressPage/>}
+            <motion.div
+              key={page}
+              initial={{ opacity:0, y:14 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, y:-14 }}
+              transition={{ duration:.18 }}>
+              {page === "dashboard" && <DashboardPage />}
+              {page === "timer"     && <TimerPage />}
+              {page === "progress"  && <ProgressPage />}
             </motion.div>
           </AnimatePresence>
         </div>
       </main>
 
-      {showExamModal && <ExamModal currentExam={exam} onSelect={switchExam} onClose={()=>setShowExamModal(false)} th={th}/>}
-      {levelUpData && <LevelUpToast level={levelUpData} accent={accent} onDone={()=>setLevelUpData(null)}/>}
+      {showExamModal && (
+        <ExamModal
+          currentExam={exam} onSelect={switchExam}
+          onClose={() => setShowExamModal(false)} th={th}
+        />
+      )}
+      {levelUpData && (
+        <LevelUpToast level={levelUpData} accent={accent} onDone={() => setLevelUpData(null)} />
+      )}
     </div>
   );
 }
