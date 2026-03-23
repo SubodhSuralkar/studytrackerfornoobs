@@ -1,3 +1,4 @@
+index.css
 /* ─── Tailwind ─────────────────────────────────────────────────────────────── */
 @tailwind base;
 @tailwind components;
@@ -6,80 +7,167 @@
 @layer base {
   html { font-family: 'Syne', system-ui, sans-serif; }
   *, *::before, *::after { box-sizing: border-box; }
-  h1, h2, h3 { @apply tracking-tight; }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+   CSS VARIABLE THEME SYSTEM
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
 :root {
+  /* Default Dark Mode Values (Matches your initial paint) */
   --ac:       #22d3ee;
   --glow:     rgba(34, 211, 238, 0.4);
   --bg:       #09090b;
-  --surface:  rgba(255, 255, 255, 0.05); /* Professional Glass */
-  --border:   rgba(255, 255, 255, 0.08);
+  --surface:  rgba(24, 24, 27, 0.85);
+  --border:   rgba(255, 255, 255, 0.07);
   --sep:      rgba(255, 255, 255, 0.06);
   --text:     #f4f4f5;
-  --muted:    rgba(161, 161, 170, 0.6);
-  --input-bg: rgba(255, 255, 255, 0.03);
-  --input-bd: rgba(255, 255, 255, 0.1);
-  --sel-bg:   #18181b;
+  --muted:    rgba(161, 161, 170, 0.7);
+  --input-bg: #27272a;
+  --input-bd: #3f3f46;
+  --sel-bg:   #27272a;
   --sel-text: #f4f4f5;
   --opt-bg:   #18181b;
-  --track:    rgba(255, 255, 255, 0.06);
-  --topbar:   rgba(9, 9, 11, 0.8);
-  --sidebar:  rgba(9, 9, 11, 0.9);
-  --bnav:     rgba(9, 9, 11, 0.9);
-  --modal-bg: #121214;
-  --sticky:   #121214;
-  --badge:    rgba(255, 255, 255, 0.05);
-  --subtle:   rgba(255, 255, 255, 0.03);
+  --track:    rgba(255, 255, 255, 0.08);
+  --topbar:   rgba(9, 9, 11, 0.92);
+  --sidebar:  rgba(9, 9, 11, 0.97);
+  --bnav:     rgba(9, 9, 11, 0.95);
+  --modal-bg: #18181b;
+  --sticky:   #18181b;
+  --badge:    rgba(255, 255, 255, 0.06);
+  --subtle:   rgba(255, 255, 255, 0.04);
   --sub-cl:   #52525b;
   --row-base: rgba(255, 255, 255, 0.02);
-  --warn:     #ef4444;
-  --warn-glow: rgba(239, 68, 68, 0.4);
+
+  /* Transition definition */
+  --theme-transition: background-color 400ms ease, color 400ms ease, border-color 400ms ease;
 }
 
+/* Light palette */
 .t-light {
-  --bg:       #f8fafc;
-  --surface:  rgba(241, 245, 249, 0.6);
-  --border:   rgba(15, 23, 42, 0.08);
-  --sep:      rgba(15, 23, 42, 0.05);
+  --bg:       #f1f5f9;
+  --surface:  rgba(255, 255, 255, 0.88);
+  --border:   rgba(0, 0, 0, 0.08);
+  --sep:      rgba(0, 0, 0, 0.06);
   --text:     #0f172a;
   --muted:    rgba(71, 85, 105, 0.8);
-  --input-bg: #ffffff;
-  --input-bd: #e2e8f0;
-  --sel-bg:   #ffffff;
+  --input-bg: #f1f5f9;
+  --input-bd: #cbd5e1;
+  --sel-bg:   #f1f5f9;
   --sel-text: #0f172a;
   --opt-bg:   #ffffff;
-  --track:    rgba(0, 0, 0, 0.05);
-  --topbar:   rgba(248, 250, 252, 0.8);
-  --sidebar:  #ffffff;
-  --bnav:     #ffffff;
+  --track:    rgba(0, 0, 0, 0.08);
+  --topbar:   rgba(241, 245, 249, 0.94);
+  --sidebar:  rgba(255, 255, 255, 0.97);
+  --bnav:     rgba(255, 255, 255, 0.97);
   --modal-bg: #ffffff;
   --sticky:   #ffffff;
-  --badge:    rgba(0, 0, 0, 0.03);
-  --subtle:   rgba(0, 0, 0, 0.02);
+  --badge:    rgba(0, 0, 0, 0.04);
+  --subtle:   rgba(0, 0, 0, 0.04);
   --sub-cl:   #64748b;
-  --row-base: rgba(0, 0, 0, 0.01);
+  --row-base: rgba(0, 0, 0, 0.02);
 }
 
-/* ANTI-FLICKER & PERFORMANCE */
-.preload * { transition: none !important; }
-html, body { background-color: var(--bg); color: var(--text); min-height: 100dvh; transition: background-color 0.4s ease; }
-.glass { backdrop-filter: blur(12px) saturate(180%); -webkit-backdrop-filter: blur(12px) saturate(180%); }
-.st-card { background: var(--surface); border: 1px solid var(--border); border-radius: 1.25rem; }
-
-/* TYPOGRAPHY */
-.timer-text { font-variant-numeric: tabular-nums; font-family: 'DM Mono', monospace; font-weight: 700; letter-spacing: -0.02em; }
-.heatmap-cell { aspect-ratio: 1; border-radius: 3px; transition: all 0.2s ease; cursor: pointer; }
-.heatmap-cell:hover { transform: scale(1.2); z-index: 10; filter: brightness(1.2); }
-
-/* BURNOUT PULSE */
-@keyframes burnout-pulse {
-  0% { box-shadow: 0 0 10px var(--warn); border-color: var(--warn); }
-  50% { box-shadow: 0 0 25px var(--warn); border-color: #f87171; }
-  100% { box-shadow: 0 0 10px var(--warn); border-color: var(--warn); }
+/* Neon palette */
+.t-neon {
+  --bg:       #000000;
+  --surface:  rgba(3, 3, 4, 0.92);
+  --border:   rgba(34, 211, 238, 0.14);
+  --sep:      rgba(34, 211, 238, 0.07);
+  --text:     #ecfeff;
+  --muted:    rgba(14, 116, 144, 0.9);
+  --input-bg: #09090b;
+  --input-bd: #3f3f46;
+  --sel-bg:   #09090b;
+  --sel-text: #ecfeff;
+  --opt-bg:   #09090b;
+  --track:    rgba(34, 211, 238, 0.06);
+  --topbar:   rgba(0, 0, 0, 0.93);
+  --sidebar:  rgba(0, 0, 0, 0.97);
+  --bnav:     rgba(0, 0, 0, 0.97);
+  --modal-bg: #030304;
+  --sticky:   #030304;
+  --badge:    rgba(34, 211, 238, 0.06);
+  --subtle:   rgba(34, 211, 238, 0.04);
+  --sub-cl:   #155e75;
+  --row-base: rgba(34, 211, 238, 0.02);
 }
-.burnout-active { animation: burnout-pulse 1.5s infinite; --ac: var(--warn) !important; --glow: var(--warn-glow) !important; }
 
-/* XP BAR */
-.xp-bar { background: linear-gradient(90deg, var(--ac), #a855f7, var(--ac)); background-size: 200% auto; animation: shimmer 3s linear infinite; }
+/* 
+   ANTI-FLICKER: Disable transitions while the 'preload' class is present.
+   This class is removed via JS after the first theme application.
+*/
+.preload * {
+  -webkit-transition: none !important;
+  -moz-transition: none !important;
+  -ms-transition: none !important;
+  -o-transition: none !important;
+  transition: none !important;
+}
+
+html, body {
+  background-color: var(--bg);
+  color: var(--text);
+  min-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  transition: var(--theme-transition);
+}
+
+#root, .app-shell {
+  background-color: var(--bg);
+  min-height: 100dvh;
+}
+
+.st-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: var(--theme-transition);
+}
+
+.st-topbar, .st-sidebar, .st-bnav {
+  transition: var(--theme-transition);
+}
+
+.st-topbar { background: var(--topbar); border-color: var(--sep); }
+.st-sidebar { background: var(--sidebar); border-color: var(--sep); }
+.st-bnav { background: var(--bnav); border-top: 1px solid var(--sep); }
+.st-modal { background: var(--modal-bg); }
+.st-sep-b { border-bottom: 1px solid var(--sep); }
+.st-sep-t { border-top: 1px solid var(--sep); }
+.st-subtle { background: var(--subtle) !important; color: var(--sub-cl) !important; }
+.st-sticky { background: var(--sticky); }
+.glass { backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+
+/* Main content offset */
+.st-main { margin-left: 0; transition: margin 0.3s ease; }
+@media (min-width: 768px) { .st-main { margin-left: 62px; } }
+
+/* Rest of your existing CSS (Scrollbar, XP Bar, Zap Button, etc.) stays the same... */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
+.t-light ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.13); }
+
 @keyframes shimmer { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
+.xp-bar { background: linear-gradient(90deg, var(--ac), #818cf8, var(--ac)); background-size: 200% auto; animation: shimmer 2.4s linear infinite; }
+
+.zap-btn { will-change: transform; contain: strict; }
+@keyframes zap-pulse { 0%, 100% { box-shadow: 0 0 8px var(--glow), 0 0 16px var(--glow); } 50% { box-shadow: 0 0 22px var(--glow), 0 0 44px var(--glow); } }
+.zap-ring { animation: zap-pulse 2s ease-in-out infinite; }
+.t-neon .zap-ring { animation-duration: 1.3s; }
+
+@keyframes lvl-in {
+  0%   { transform: translateX(-50%) translateY(60px) scale(.78); opacity: 0; }
+  18%  { transform: translateX(-50%) translateY(-8px) scale(1.06); opacity: 1; }
+  80%  { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
+  100% { transform: translateX(-50%) translateY(-28px) scale(.92); opacity: 0; }
+}
+.levelup { animation: lvl-in 2.8s cubic-bezier(.34,1.56,.64,1) forwards; }
+
+.timer-canvas { will-change: contents; display: block; }
+.timer-text { font-variant-numeric: tabular-nums; min-width: 4ch; display: inline-block; text-align: center; font-family: 'Rajdhani', 'DM Mono', monospace; font-weight: 700; letter-spacing: 0.05em; }
+
+input, select { background: var(--input-bg); border: 1px solid var(--input-bd); color: var(--text); border-radius: 0.75rem; font-family: 'Syne', sans-serif; outline: none; transition: border-color .2s; }
+input:focus, select:focus { border-color: var(--ac) !important; }
+select { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath fill='%2371717a' d='M6 8L0 0h12z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px !important; }
