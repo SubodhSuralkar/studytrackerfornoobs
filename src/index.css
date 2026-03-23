@@ -1,81 +1,260 @@
+/* ── Tailwind ──────────────────────────────────────────────────────────────── */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ── Google Fonts fallback ── */
+/* ── Fonts ─────────────────────────────────────────────────────────────────── */
 @layer base {
   html { font-family: 'Syne', system-ui, sans-serif; }
   * { box-sizing: border-box; }
 }
 
-/* ── Custom scrollbar ── */
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.25); }
+/* ══════════════════════════════════════════════════════════════════════════════
+   THEME SYSTEM
+   Colors live here as CSS custom properties. JS only swaps the body class.
+   All bg/color transitions are CSS, not React state — no flicker, no re-paint.
+   ══════════════════════════════════════════════════════════════════════════════ */
 
-/* Light mode scrollbar */
-.light-mode ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); }
+/* ── Dark (default) ─────────────────────────────────────────────────────────── */
+:root,
+html.theme-dark {
+  --bg:             #09090b;
+  --surface:        #18181b;
+  --card-bg:        rgba(24,24,27,0.82);
+  --card-border:    rgba(255,255,255,0.07);
+  --topbar-bg:      rgba(9,9,11,0.90);
+  --topbar-border:  rgba(255,255,255,0.06);
+  --sidebar-bg:     rgba(9,9,11,0.97);
+  --sidebar-border: rgba(255,255,255,0.06);
+  --divider:        rgba(255,255,255,0.06);
+  --btn-subtle-bg:  rgba(255,255,255,0.04);
+  --btn-subtle-cl:  #52525b;
+  --bottom-nav-bg:  rgba(9,9,11,0.95);
+  --bottom-nav-bdr: rgba(255,255,255,0.07);
+  --text-base:      #f4f4f5;
+  --sticky-hdr-bg:  #18181b;
+}
 
-/* ── XP bar shimmer ── */
+/* ── Light ───────────────────────────────────────────────────────────────────── */
+html.theme-light {
+  --bg:             #f1f5f9;
+  --surface:        #ffffff;
+  --card-bg:        rgba(255,255,255,0.90);
+  --card-border:    rgba(0,0,0,0.08);
+  --topbar-bg:      rgba(241,245,249,0.92);
+  --topbar-border:  rgba(0,0,0,0.07);
+  --sidebar-bg:     rgba(255,255,255,0.97);
+  --sidebar-border: rgba(0,0,0,0.07);
+  --divider:        rgba(0,0,0,0.06);
+  --btn-subtle-bg:  rgba(0,0,0,0.04);
+  --btn-subtle-cl:  #64748b;
+  --bottom-nav-bg:  rgba(255,255,255,0.95);
+  --bottom-nav-bdr: rgba(0,0,0,0.08);
+  --text-base:      #0f172a;
+  --sticky-hdr-bg:  #ffffff;
+}
+
+/* ── Neon ─────────────────────────────────────────────────────────────────────── */
+html.theme-neon {
+  --bg:             #000000;
+  --surface:        #030304;
+  --card-bg:        rgba(3,3,4,0.92);
+  --card-border:    rgba(34,211,238,0.15);
+  --topbar-bg:      rgba(0,0,0,0.92);
+  --topbar-border:  rgba(34,211,238,0.15);
+  --sidebar-bg:     rgba(0,0,0,0.97);
+  --sidebar-border: rgba(34,211,238,0.15);
+  --divider:        rgba(34,211,238,0.08);
+  --btn-subtle-bg:  rgba(34,211,238,0.04);
+  --btn-subtle-cl:  #155e75;
+  --bottom-nav-bg:  rgba(0,0,0,0.96);
+  --bottom-nav-bdr: rgba(34,211,238,0.15);
+  --text-base:      #ecfeff;
+  --sticky-hdr-bg:  #030304;
+}
+
+/* ── Global background & text transition (smooth theme switch) ──────────────── */
+html, body {
+  background-color: var(--bg);
+  color:            var(--text-base);
+  transition:       background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ── Semantic component classes (used in JSX instead of inline vars) ─────────── */
+.app-root {
+  background-color: var(--bg);
+  transition: background-color 0.3s ease;
+}
+
+.st-card {
+  background:    var(--card-bg) !important;
+  border-color:  var(--card-border) !important;
+  transition:    background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.st-card-sticky {
+  background-color: var(--sticky-hdr-bg);
+  transition: background-color 0.3s ease;
+}
+
+.st-sidebar {
+  background:   var(--sidebar-bg) !important;
+  border-color: var(--sidebar-border) !important;
+  transition:   background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.st-topbar {
+  background:   var(--topbar-bg) !important;
+  border-color: var(--topbar-border) !important;
+  transition:   background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.st-bottom-nav {
+  background:   var(--bottom-nav-bg);
+  border-top:   1px solid var(--bottom-nav-bdr);
+  transition:   background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.st-divider-b { border-bottom: 1px solid var(--divider); }
+.st-divider-t { border-top:    1px solid var(--divider); }
+
+.st-btn-subtle {
+  background-color: var(--btn-subtle-bg) !important;
+  color:            var(--btn-subtle-cl) !important;
+  transition:       background-color 0.2s ease, color 0.2s ease;
+}
+
+/* ── Main content offset (desktop sidebar is 62px collapsed) ────────────────── */
+.st-main {
+  margin-left: 0;
+  transition: margin-left 0.25s ease;
+}
+@media (min-width: 768px) {
+  .st-main { margin-left: 62px; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   SCROLLBAR
+   ══════════════════════════════════════════════════════════════════════════════ */
+::-webkit-scrollbar        { width: 4px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.12); border-radius: 4px; }
+html.theme-light ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.14); }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   GLASS
+   ══════════════════════════════════════════════════════════════════════════════ */
+.glass {
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   XP BAR SHIMMER
+   ══════════════════════════════════════════════════════════════════════════════ */
 @keyframes shimmer {
   0%   { background-position: -200% center; }
   100% { background-position:  200% center; }
 }
-
 .xp-shimmer {
   background-size: 200% auto;
   animation: shimmer 2.4s linear infinite;
 }
 
-/* ── Electric zap pulse ── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   ELECTRIC ZAP PULSE
+   ══════════════════════════════════════════════════════════════════════════════ */
 @keyframes zap-pulse {
-  0%, 100% { box-shadow: 0 0 8px var(--accent-glow), 0 0 16px var(--accent-glow); }
-  50%       { box-shadow: 0 0 20px var(--accent-glow), 0 0 40px var(--accent-glow), 0 0 60px var(--accent-glow); }
+  0%, 100% { box-shadow: 0 0 8px  var(--accent-glow), 0 0 16px var(--accent-glow); }
+  50%       { box-shadow: 0 0 20px var(--accent-glow), 0 0 44px var(--accent-glow), 0 0 64px var(--accent-glow); }
 }
-
 .zap-pulse { animation: zap-pulse 2s ease-in-out infinite; }
 
-/* ── Level-up toast ── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   LEVEL-UP TOAST
+   ══════════════════════════════════════════════════════════════════════════════ */
 @keyframes levelup-anim {
-  0%   { transform: translateX(-50%) translateY(60px) scale(0.75); opacity: 0; }
-  18%  { transform: translateX(-50%) translateY(-8px)  scale(1.06); opacity: 1; }
-  80%  { transform: translateX(-50%) translateY(0)     scale(1);    opacity: 1; }
-  100% { transform: translateX(-50%) translateY(-28px) scale(0.92); opacity: 0; }
+  0%   { transform: translateX(-50%) translateY(60px)  scale(0.78); opacity: 0; }
+  18%  { transform: translateX(-50%) translateY(-8px)   scale(1.06); opacity: 1; }
+  80%  { transform: translateX(-50%) translateY(0)      scale(1);    opacity: 1; }
+  100% { transform: translateX(-50%) translateY(-28px)  scale(0.92); opacity: 0; }
 }
-
 .levelup-toast {
-  animation: levelup-anim 2.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  animation: levelup-anim 2.8s cubic-bezier(0.34,1.56,0.64,1) forwards;
 }
 
-/* ── Glass card ── */
-.glass {
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+/* ══════════════════════════════════════════════════════════════════════════════
+   TASK INPUT — theme-aware without JS re-render
+   ══════════════════════════════════════════════════════════════════════════════ */
+input.task-input {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-
-/* ── Neon borders in neon mode ── */
-.neon-mode .neon-card {
-  box-shadow: 0 0 10px var(--accent-glow), inset 0 0 12px rgba(34, 211, 238, 0.04);
+input.task-input:focus {
+  border-color: var(--accent-color, #22d3ee) !important;
+  box-shadow:   0 0 0 3px rgba(34,211,238,0.18);
 }
+input.task-input-dark  { background:#27272a; border-color:#3f3f46; color:#f4f4f5; }
+input.task-input-light { background:#f1f5f9; border-color:#cbd5e1; color:#0f172a; }
+html.theme-neon input.task-input-dark { background:#09090b; }
 
-/* ── Smooth page transitions ── */
-.page-enter  { opacity: 0; transform: translateY(14px); }
-.page-exit   { opacity: 0; transform: translateY(-14px); }
-
-/* ── Select element custom styling ── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   SELECT CUSTOM ARROW
+   ══════════════════════════════════════════════════════════════════════════════ */
 select {
   appearance: none;
   -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2371717a' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2371717a' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 12px center;
-  padding-right: 32px !important;
+  background-position: right 14px center;
+  padding-right: 36px !important;
+  transition: border-color 0.2s ease;
 }
+select:focus { border-color: var(--accent-color, #22d3ee) !important; outline: none; }
 
-/* ── Focus ring override ── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   FOCUS RING (accessibility)
+   ══════════════════════════════════════════════════════════════════════════════ */
 button:focus-visible,
 input:focus-visible {
   outline: 2px solid var(--accent-color, #22d3ee);
   outline-offset: 2px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   MOBILE — safe area for iOS home indicator
+   ══════════════════════════════════════════════════════════════════════════════ */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .st-bottom-nav {
+    padding-bottom: env(safe-area-inset-bottom);
+    height: calc(60px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Content must not hide behind bottom nav on mobile */
+@media (max-width: 767px) {
+  .st-main > div:last-child { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   VIEWPORT — 100dvh respects mobile browser chrome (no bounce)
+   ══════════════════════════════════════════════════════════════════════════════ */
+html, body, #root {
+  height: 100%;
+  min-height: 100dvh;
+  overscroll-behavior: none; /* prevents pull-to-refresh bounce on mobile */
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   FRAMER MOTION — prevent layout-shift flicker during list reorder
+   ══════════════════════════════════════════════════════════════════════════════ */
+[data-framer-component-type] { will-change: transform; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   NEON THEME EXTRAS
+   ══════════════════════════════════════════════════════════════════════════════ */
+html.theme-neon .st-card {
+  box-shadow: 0 0 12px rgba(34,211,238,0.06), inset 0 0 16px rgba(34,211,238,0.02);
+}
+html.theme-neon .zap-pulse {
+  animation-duration: 1.4s; /* faster pulse in neon mode */
 }
