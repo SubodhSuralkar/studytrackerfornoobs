@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Google Fonts fallback ── */
+@layer base {
+  html { font-family: 'Syne', system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+}
+
+/* ── Custom scrollbar ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.25); }
+
+/* Light mode scrollbar */
+.light-mode ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); }
+
+/* ── XP bar shimmer ── */
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+
+.xp-shimmer {
+  background-size: 200% auto;
+  animation: shimmer 2.4s linear infinite;
+}
+
+/* ── Electric zap pulse ── */
+@keyframes zap-pulse {
+  0%, 100% { box-shadow: 0 0 8px var(--accent-glow), 0 0 16px var(--accent-glow); }
+  50%       { box-shadow: 0 0 20px var(--accent-glow), 0 0 40px var(--accent-glow), 0 0 60px var(--accent-glow); }
+}
+
+.zap-pulse { animation: zap-pulse 2s ease-in-out infinite; }
+
+/* ── Level-up toast ── */
+@keyframes levelup-anim {
+  0%   { transform: translateX(-50%) translateY(60px) scale(0.75); opacity: 0; }
+  18%  { transform: translateX(-50%) translateY(-8px)  scale(1.06); opacity: 1; }
+  80%  { transform: translateX(-50%) translateY(0)     scale(1);    opacity: 1; }
+  100% { transform: translateX(-50%) translateY(-28px) scale(0.92); opacity: 0; }
+}
+
+.levelup-toast {
+  animation: levelup-anim 2.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* ── Glass card ── */
+.glass {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* ── Neon borders in neon mode ── */
+.neon-mode .neon-card {
+  box-shadow: 0 0 10px var(--accent-glow), inset 0 0 12px rgba(34, 211, 238, 0.04);
+}
+
+/* ── Smooth page transitions ── */
+.page-enter  { opacity: 0; transform: translateY(14px); }
+.page-exit   { opacity: 0; transform: translateY(-14px); }
+
+/* ── Select element custom styling ── */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2371717a' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px !important;
+}
+
+/* ── Focus ring override ── */
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent-color, #22d3ee);
+  outline-offset: 2px;
+}
