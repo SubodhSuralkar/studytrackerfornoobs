@@ -1063,12 +1063,23 @@ export default function App() {
   const accent = meta?.accent ?? "#22d3ee";
   const glow   = meta?.glow   ?? "rgba(34,211,238,.4)";
 
-  // Apply CSS vars + palette class — runs synchronously before paint
+// Apply CSS vars + palette class — runs synchronously before paint
   useLayoutEffect(() => {
+    // Add preload class to disable transitions during the update
+    document.documentElement.classList.add('preload');
+    
     applyTheme(themeId, accent, glow);
     LS.w("st_theme", themeId);
-  }, [themeId, accent, glow]);
 
+    // Force a reflow to ensure the class is applied before removal
+    // and then remove it in the next frame so future changes DO animate
+    const raf = requestAnimationFrame(() => {
+      document.documentElement.classList.remove('preload');
+    });
+    
+    return () => cancelAnimationFrame(raf);
+  }, [themeId, accent, glow]);
+  
   // Stable pomo callbacks
   const handlePomoComplete = useCallback((info) => {
     game.addSession(info);
