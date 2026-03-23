@@ -1,260 +1,164 @@
-/* ── Tailwind ──────────────────────────────────────────────────────────────── */
+/* ── Tailwind ─────────────────────────────────────────────────────────────── */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ── Fonts ─────────────────────────────────────────────────────────────────── */
 @layer base {
   html { font-family: 'Syne', system-ui, sans-serif; }
   * { box-sizing: border-box; }
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════
-   THEME SYSTEM
-   Colors live here as CSS custom properties. JS only swaps the body class.
-   All bg/color transitions are CSS, not React state — no flicker, no re-paint.
-   ══════════════════════════════════════════════════════════════════════════════ */
-
-/* ── Dark (default) ─────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════
+   THEME TOKENS — JS swaps the class on <html>; CSS handles all colour fades
+   ═══════════════════════════════════════════════════════════════════════════ */
 :root,
 html.theme-dark {
-  --bg:             #09090b;
-  --surface:        #18181b;
-  --card-bg:        rgba(24,24,27,0.82);
-  --card-border:    rgba(255,255,255,0.07);
-  --topbar-bg:      rgba(9,9,11,0.90);
-  --topbar-border:  rgba(255,255,255,0.06);
-  --sidebar-bg:     rgba(9,9,11,0.97);
-  --sidebar-border: rgba(255,255,255,0.06);
-  --divider:        rgba(255,255,255,0.06);
-  --btn-subtle-bg:  rgba(255,255,255,0.04);
-  --btn-subtle-cl:  #52525b;
-  --bottom-nav-bg:  rgba(9,9,11,0.95);
-  --bottom-nav-bdr: rgba(255,255,255,0.07);
-  --text-base:      #f4f4f5;
-  --sticky-hdr-bg:  #18181b;
+  --bg:           #09090b;
+  --card-bg:      rgba(24,24,27,0.84);
+  --card-bdr:     rgba(255,255,255,0.07);
+  --topbar-bg:    rgba(9,9,11,0.92);
+  --topbar-bdr:   rgba(255,255,255,0.06);
+  --sidebar-bg:   rgba(9,9,11,0.97);
+  --sidebar-bdr:  rgba(255,255,255,0.06);
+  --sep:          rgba(255,255,255,0.06);
+  --subtle-bg:    rgba(255,255,255,0.04);
+  --subtle-cl:    #52525b;
+  --bnav-bg:      rgba(9,9,11,0.95);
+  --bnav-bdr:     rgba(255,255,255,0.07);
+  --sticky-bg:    #18181b;
+  --text:         #f4f4f5;
 }
 
-/* ── Light ───────────────────────────────────────────────────────────────────── */
 html.theme-light {
-  --bg:             #f1f5f9;
-  --surface:        #ffffff;
-  --card-bg:        rgba(255,255,255,0.90);
-  --card-border:    rgba(0,0,0,0.08);
-  --topbar-bg:      rgba(241,245,249,0.92);
-  --topbar-border:  rgba(0,0,0,0.07);
-  --sidebar-bg:     rgba(255,255,255,0.97);
-  --sidebar-border: rgba(0,0,0,0.07);
-  --divider:        rgba(0,0,0,0.06);
-  --btn-subtle-bg:  rgba(0,0,0,0.04);
-  --btn-subtle-cl:  #64748b;
-  --bottom-nav-bg:  rgba(255,255,255,0.95);
-  --bottom-nav-bdr: rgba(0,0,0,0.08);
-  --text-base:      #0f172a;
-  --sticky-hdr-bg:  #ffffff;
+  --bg:           #f1f5f9;
+  --card-bg:      rgba(255,255,255,0.92);
+  --card-bdr:     rgba(0,0,0,0.08);
+  --topbar-bg:    rgba(241,245,249,0.94);
+  --topbar-bdr:   rgba(0,0,0,0.07);
+  --sidebar-bg:   rgba(255,255,255,0.97);
+  --sidebar-bdr:  rgba(0,0,0,0.07);
+  --sep:          rgba(0,0,0,0.06);
+  --subtle-bg:    rgba(0,0,0,0.04);
+  --subtle-cl:    #64748b;
+  --bnav-bg:      rgba(255,255,255,0.96);
+  --bnav-bdr:     rgba(0,0,0,0.08);
+  --sticky-bg:    #ffffff;
+  --text:         #0f172a;
 }
 
-/* ── Neon ─────────────────────────────────────────────────────────────────────── */
 html.theme-neon {
-  --bg:             #000000;
-  --surface:        #030304;
-  --card-bg:        rgba(3,3,4,0.92);
-  --card-border:    rgba(34,211,238,0.15);
-  --topbar-bg:      rgba(0,0,0,0.92);
-  --topbar-border:  rgba(34,211,238,0.15);
-  --sidebar-bg:     rgba(0,0,0,0.97);
-  --sidebar-border: rgba(34,211,238,0.15);
-  --divider:        rgba(34,211,238,0.08);
-  --btn-subtle-bg:  rgba(34,211,238,0.04);
-  --btn-subtle-cl:  #155e75;
-  --bottom-nav-bg:  rgba(0,0,0,0.96);
-  --bottom-nav-bdr: rgba(34,211,238,0.15);
-  --text-base:      #ecfeff;
-  --sticky-hdr-bg:  #030304;
+  --bg:           #000000;
+  --card-bg:      rgba(3,3,4,0.93);
+  --card-bdr:     rgba(34,211,238,0.14);
+  --topbar-bg:    rgba(0,0,0,0.93);
+  --topbar-bdr:   rgba(34,211,238,0.14);
+  --sidebar-bg:   rgba(0,0,0,0.97);
+  --sidebar-bdr:  rgba(34,211,238,0.14);
+  --sep:          rgba(34,211,238,0.07);
+  --subtle-bg:    rgba(34,211,238,0.04);
+  --subtle-cl:    #155e75;
+  --bnav-bg:      rgba(0,0,0,0.96);
+  --bnav-bdr:     rgba(34,211,238,0.14);
+  --sticky-bg:    #030304;
+  --text:         #ecfeff;
 }
 
-/* ── Global background & text transition (smooth theme switch) ──────────────── */
+/* ── Root background + colour transition (smooth theme switch) ─────────────── */
 html, body {
   background-color: var(--bg);
-  color:            var(--text-base);
-  transition:       background-color 0.3s ease, color 0.3s ease;
+  color: var(--text);
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* ── Semantic component classes (used in JSX instead of inline vars) ─────────── */
+/* ── App root — transition-all in Tailwind handles Tailwind class colours */
 .app-root {
   background-color: var(--bg);
-  transition: background-color 0.3s ease;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
+/* ── Semantic layout classes ──────────────────────────────────────────────── */
 .st-card {
-  background:    var(--card-bg) !important;
-  border-color:  var(--card-border) !important;
-  transition:    background-color 0.3s ease, border-color 0.3s ease;
+  background: var(--card-bg) !important;
+  border-color: var(--card-bdr) !important;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
 }
+.st-sticky-hd { background-color: var(--sticky-bg); transition: background-color 0.3s; }
+.st-sidebar   { background: var(--sidebar-bg) !important; border-color: var(--sidebar-bdr) !important; transition: background-color 0.3s ease; }
+.st-topbar    { background: var(--topbar-bg)  !important; border-color: var(--topbar-bdr)  !important; transition: background-color 0.3s ease; }
+.st-bottom-nav { background: var(--bnav-bg); border-top: 1px solid var(--bnav-bdr); transition: background-color 0.3s ease; }
+.st-sep-b     { border-bottom: 1px solid var(--sep); }
+.st-sep-t     { border-top:    1px solid var(--sep); }
+.st-subtle-btn { background-color: var(--subtle-bg) !important; color: var(--subtle-cl) !important; }
+.glass        { backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
 
-.st-card-sticky {
-  background-color: var(--sticky-hdr-bg);
-  transition: background-color 0.3s ease;
-}
+/* ── Main content — offset by sidebar on md+ ─────────────────────────────── */
+.st-main { margin-left: 0; transition: margin-left 0.25s ease; }
+@media (min-width: 768px) { .st-main { margin-left: 62px; } }
 
-.st-sidebar {
-  background:   var(--sidebar-bg) !important;
-  border-color: var(--sidebar-border) !important;
-  transition:   background-color 0.3s ease, border-color 0.3s ease;
-}
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
+html.theme-light ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.13); }
 
-.st-topbar {
-  background:   var(--topbar-bg) !important;
-  border-color: var(--topbar-border) !important;
-  transition:   background-color 0.3s ease, border-color 0.3s ease;
-}
+/* ── Viewport — 100dvh prevents mobile bounce ────────────────────────────── */
+html, body, #root { min-height: 100dvh; overscroll-behavior: none; }
 
-.st-bottom-nav {
-  background:   var(--bottom-nav-bg);
-  border-top:   1px solid var(--bottom-nav-bdr);
-  transition:   background-color 0.3s ease, border-color 0.3s ease;
-}
-
-.st-divider-b { border-bottom: 1px solid var(--divider); }
-.st-divider-t { border-top:    1px solid var(--divider); }
-
-.st-btn-subtle {
-  background-color: var(--btn-subtle-bg) !important;
-  color:            var(--btn-subtle-cl) !important;
-  transition:       background-color 0.2s ease, color 0.2s ease;
-}
-
-/* ── Main content offset (desktop sidebar is 62px collapsed) ────────────────── */
-.st-main {
-  margin-left: 0;
-  transition: margin-left 0.25s ease;
-}
-@media (min-width: 768px) {
-  .st-main { margin-left: 62px; }
-}
-
-/* ══════════════════════════════════════════════════════════════════════════════
-   SCROLLBAR
-   ══════════════════════════════════════════════════════════════════════════════ */
-::-webkit-scrollbar        { width: 4px; }
-::-webkit-scrollbar-track  { background: transparent; }
-::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.12); border-radius: 4px; }
-html.theme-light ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.14); }
-
-/* ══════════════════════════════════════════════════════════════════════════════
-   GLASS
-   ══════════════════════════════════════════════════════════════════════════════ */
-.glass {
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════════
-   XP BAR SHIMMER
-   ══════════════════════════════════════════════════════════════════════════════ */
+/* ── XP bar shimmer ──────────────────────────────────────────────────────── */
 @keyframes shimmer {
   0%   { background-position: -200% center; }
   100% { background-position:  200% center; }
 }
-.xp-shimmer {
+.xp-bar {
   background-size: 200% auto;
   animation: shimmer 2.4s linear infinite;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════
-   ELECTRIC ZAP PULSE
-   ══════════════════════════════════════════════════════════════════════════════ */
-@keyframes zap-pulse {
-  0%, 100% { box-shadow: 0 0 8px  var(--accent-glow), 0 0 16px var(--accent-glow); }
-  50%       { box-shadow: 0 0 20px var(--accent-glow), 0 0 44px var(--accent-glow), 0 0 64px var(--accent-glow); }
+/* ── Electric zap ring pulse ────────────────────────────────────────────── */
+@keyframes zap-ring {
+  0%,100% { box-shadow: 0 0  8px var(--glow,rgba(34,211,238,.4)), 0 0 16px var(--glow,rgba(34,211,238,.4)); }
+  50%     { box-shadow: 0 0 20px var(--glow,rgba(34,211,238,.4)), 0 0 44px var(--glow,rgba(34,211,238,.4)), 0 0 64px var(--glow,rgba(34,211,238,.4)); }
 }
-.zap-pulse { animation: zap-pulse 2s ease-in-out infinite; }
+.zap-ring { animation: zap-ring 2s ease-in-out infinite; }
 
-/* ══════════════════════════════════════════════════════════════════════════════
-   LEVEL-UP TOAST
-   ══════════════════════════════════════════════════════════════════════════════ */
-@keyframes levelup-anim {
+/* ── Level-up toast ──────────────────────────────────────────────────────── */
+@keyframes lvl-up {
   0%   { transform: translateX(-50%) translateY(60px)  scale(0.78); opacity: 0; }
-  18%  { transform: translateX(-50%) translateY(-8px)   scale(1.06); opacity: 1; }
-  80%  { transform: translateX(-50%) translateY(0)      scale(1);    opacity: 1; }
-  100% { transform: translateX(-50%) translateY(-28px)  scale(0.92); opacity: 0; }
+  18%  { transform: translateX(-50%) translateY(-8px)  scale(1.06); opacity: 1; }
+  80%  { transform: translateX(-50%) translateY(0)     scale(1);    opacity: 1; }
+  100% { transform: translateX(-50%) translateY(-28px) scale(0.92); opacity: 0; }
 }
-.levelup-toast {
-  animation: levelup-anim 2.8s cubic-bezier(0.34,1.56,0.64,1) forwards;
-}
+.levelup { animation: lvl-up 2.8s cubic-bezier(0.34,1.56,0.64,1) forwards; }
 
-/* ══════════════════════════════════════════════════════════════════════════════
-   TASK INPUT — theme-aware without JS re-render
-   ══════════════════════════════════════════════════════════════════════════════ */
-input.task-input {
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-input.task-input:focus {
-  border-color: var(--accent-color, #22d3ee) !important;
-  box-shadow:   0 0 0 3px rgba(34,211,238,0.18);
-}
-input.task-input-dark  { background:#27272a; border-color:#3f3f46; color:#f4f4f5; }
-input.task-input-light { background:#f1f5f9; border-color:#cbd5e1; color:#0f172a; }
-html.theme-neon input.task-input-dark { background:#09090b; }
-
-/* ══════════════════════════════════════════════════════════════════════════════
-   SELECT CUSTOM ARROW
-   ══════════════════════════════════════════════════════════════════════════════ */
+/* ── Select custom arrow ─────────────────────────────────────────────────── */
 select {
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2371717a' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath fill='%2371717a' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 14px center;
   padding-right: 36px !important;
-  transition: border-color 0.2s ease;
 }
-select:focus { border-color: var(--accent-color, #22d3ee) !important; outline: none; }
+select:focus { border-color: var(--ac,#22d3ee) !important; outline: none; }
 
-/* ══════════════════════════════════════════════════════════════════════════════
-   FOCUS RING (accessibility)
-   ══════════════════════════════════════════════════════════════════════════════ */
-button:focus-visible,
-input:focus-visible {
-  outline: 2px solid var(--accent-color, #22d3ee);
-  outline-offset: 2px;
-}
+/* ── Focus rings ─────────────────────────────────────────────────────────── */
+button:focus-visible, input:focus-visible { outline: 2px solid var(--ac,#22d3ee); outline-offset: 2px; }
 
-/* ══════════════════════════════════════════════════════════════════════════════
-   MOBILE — safe area for iOS home indicator
-   ══════════════════════════════════════════════════════════════════════════════ */
+/* ── Mobile safe area ────────────────────────────────────────────────────── */
 @supports (padding-bottom: env(safe-area-inset-bottom)) {
   .st-bottom-nav {
-    padding-bottom: env(safe-area-inset-bottom);
     height: calc(60px + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }
-
-/* Content must not hide behind bottom nav on mobile */
 @media (max-width: 767px) {
-  .st-main > div:last-child { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+  .st-main > div:last-child { padding-bottom: calc(80px + env(safe-area-inset-bottom,0px)); }
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════
-   VIEWPORT — 100dvh respects mobile browser chrome (no bounce)
-   ══════════════════════════════════════════════════════════════════════════════ */
-html, body, #root {
-  height: 100%;
-  min-height: 100dvh;
-  overscroll-behavior: none; /* prevents pull-to-refresh bounce on mobile */
-}
-
-/* ══════════════════════════════════════════════════════════════════════════════
-   FRAMER MOTION — prevent layout-shift flicker during list reorder
-   ══════════════════════════════════════════════════════════════════════════════ */
-[data-framer-component-type] { will-change: transform; }
-
-/* ══════════════════════════════════════════════════════════════════════════════
-   NEON THEME EXTRAS
-   ══════════════════════════════════════════════════════════════════════════════ */
+/* ── Neon mode card glow ─────────────────────────────────────────────────── */
 html.theme-neon .st-card {
   box-shadow: 0 0 12px rgba(34,211,238,0.06), inset 0 0 16px rgba(34,211,238,0.02);
 }
-html.theme-neon .zap-pulse {
-  animation-duration: 1.4s; /* faster pulse in neon mode */
-}
+html.theme-neon .zap-ring { animation-duration: 1.4s; }
+
+/* ── Framer Motion layout hint ───────────────────────────────────────────── */
+[data-framer-component-type] { will-change: transform; }
